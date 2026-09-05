@@ -1601,20 +1601,61 @@ function studentProgressView(student: Student): string {
   const percent = counts.total ? Math.round((counts.completed / counts.total) * 100) : 0;
   const yearLessons = lessonsForYear(progressYear);
   const yearName = curriculumYears[progressYear - 1]?.[0] ?? `Year ${progressYear}`;
+
   return `
-    <header class="topbar"><div><p class="eyebrow">STUDENT LEARNING</p><h2>Curriculum Progress</h2></div><div class="admin-area"><div class="admin-avatar">EA</div><div><strong>Academy Admin</strong><span>Administrator</span></div></div></header>
-    <section class="page-heading"><div><p class="eyebrow">${escapeHtml(student.student_code)}</p><h3>${escapeHtml(studentName(student))}</h3><p>${escapeHtml(yearName)} · Current Year ${student.current_year}</p></div><button class="secondary-button" data-action="back-students">← Back to Students</button></section>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">STUDENT LEARNING</p>
+        <h2>Curriculum Progress</h2>
+      </div>
+      <div class="admin-area">
+        <div class="admin-avatar">EA</div>
+        <div><strong>Academy Admin</strong><span>Administrator</span></div>
+      </div>
+    </header>
+
+    <section class="page-heading curriculum-progress-heading">
+      <div>
+        <p class="eyebrow">STUDENT LESSON RECORD</p>
+        <h3>${escapeHtml(studentName(student))}</h3>
+        <p>${escapeHtml(student.student_code)} · ${escapeHtml(yearName)} · Current Year ${student.current_year}</p>
+      </div>
+      <div class="page-heading-actions">
+        <label class="student-switcher">
+          <span>Student</span>
+          <select id="curriculum-student" aria-label="Select student">
+            ${students.map((item) => `
+              <option value="${item.id}" ${item.id === student.id ? 'selected' : ''}>
+                ${escapeHtml(studentName(item))} — ${escapeHtml(item.student_code)}
+              </option>
+            `).join('')}
+          </select>
+        </label>
+        <button class="secondary-button" data-action="back-students">← Back to Students</button>
+      </div>
+    </section>
+
     <section class="stats-grid student-stats">
       <article class="stat-card"><div class="stat-icon">▤</div><div><span>YEAR ${progressYear} LESSONS</span><strong>${counts.completed} / ${counts.total}</strong><small>Completed</small></div></article>
       <article class="stat-card"><div class="stat-icon">%</div><div><span>YEAR PROGRESS</span><strong>${percent}%</strong><small>${escapeHtml(yearName)}</small></div></article>
       <article class="stat-card"><div class="stat-icon">→</div><div><span>IN PROGRESS</span><strong>${counts.inProgress}</strong><small>Lessons developing</small></div></article>
       <article class="stat-card"><div class="stat-icon">!</div><div><span>REQUIRES REVIEW</span><strong>${counts.review}</strong><small>Needs coach attention</small></div></article>
     </section>
+
     <section class="panel curriculum-progress-panel">
-      <div class="panel-header"><div><p class="eyebrow">SIX-YEAR CURRICULUM</p><h3>Student Lesson Record</h3><p>Record lesson status, mastery and coach notes.</p></div><span class="badge">240 Lessons</span></div>
-      <div class="curriculum-year-tabs">
-        ${[1,2,3,4,5,6].map((year) => `<button class="curriculum-year-tab ${progressYear === year ? 'active' : ''}" data-progress-year="${year}"><strong>Year ${year}</strong><span>${escapeHtml(curriculumYears[year - 1][0])}</span></button>`).join('')}
+      <div class="panel-header">
+        <div><p class="eyebrow">SIX-YEAR CURRICULUM</p><h3>Student Lesson Record</h3><p>Record lesson status, mastery and coach notes.</p></div>
+        <span class="badge">240 Lessons</span>
       </div>
+
+      <div class="curriculum-year-tabs">
+        ${[1,2,3,4,5,6].map((year) => `
+          <button class="curriculum-year-tab ${progressYear === year ? 'active' : ''}" data-progress-year="${year}">
+            <strong>Year ${year}</strong><span>${escapeHtml(curriculumYears[year - 1][0])}</span>
+          </button>
+        `).join('')}
+      </div>
+
       <div class="progress-list">
         ${yearLessons.map((lesson) => {
           const progress = lessonProgress[lesson.id];
@@ -1623,10 +1664,14 @@ function studentProgressView(student: Student): string {
           return `<article class="lesson-progress-row" data-lesson-row="${lesson.id}">
             <div class="lesson-number">${String(lesson.week_number).padStart(2,'0')}</div>
             <div class="lesson-main">
-              <div class="lesson-title-line"><h4>Week ${lesson.week_number}: ${escapeHtml(lesson.title)}</h4><span class="status-pill ${status.toLowerCase().replaceAll('_','-')}">${status.replaceAll('_',' ')}</span></div>
-              <p>${escapeHtml(lesson.description)}</p>
-              ${lesson.objective ? `<div class="lesson-detail"><strong>Objective:</strong> ${escapeHtml(lesson.objective)}</div>` : ''}
-              ${lesson.key_terms?.length ? `<div class="lesson-terms"><strong>Key terms:</strong> ${lesson.key_terms.map((term) => escapeHtml(term)).join(', ')}</div>` : ''}
+              <div class="lesson-title-line">
+                <div><span class="lesson-week">WEEK ${lesson.week_number}</span><h4>${escapeHtml(lesson.title)}</h4></div>
+                <span class="status-pill ${status.toLowerCase().replaceAll('_','-')}">${status.replaceAll('_',' ')}</span>
+              </div>
+              <p class="lesson-description">${escapeHtml(lesson.description)}</p>
+              ${lesson.objective ? `<div class="lesson-detail"><strong>Objective</strong><span>${escapeHtml(lesson.objective)}</span></div>` : ''}
+              ${lesson.key_terms?.length ? `<div class="lesson-terms"><strong>Key terms</strong><span>${lesson.key_terms.map((term) => escapeHtml(term)).join(' · ')}</span></div>` : ''}
+
               <div class="lesson-progress-controls">
                 <label><span>Status</span><select data-progress-status>${['NOT_STARTED','IN_PROGRESS','COMPLETED','REQUIRES_REVIEW'].map((v) => `<option value="${v}" ${status === v ? 'selected' : ''}>${v.replaceAll('_',' ')}</option>`).join('')}</select></label>
                 <label><span>Mastery</span><select data-progress-mastery><option value="">Not rated</option>${['DEVELOPING','SECURE','INDEPENDENT'].map((v) => `<option value="${v}" ${mastery === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
@@ -2131,13 +2176,24 @@ function attachEvents() {
   });
 
   document.querySelector('#promotion-student')?.addEventListener('change', async (event) => {
-    selectedPromotionStudentId = (event.target as HTMLSelectElement).value;
-    await openPromotion(selectedPromotionStudentId);
+    const id = (event.target as HTMLSelectElement).value;
+    if (!id || !students.some((item) => item.id === id)) return;
+    selectedPromotionStudentId = id;
+    await openPromotion(id);
   });
 
   document.querySelector('#save-promotion-review')?.addEventListener('click', async () => {
     const student = students.find((item) => item.id === selectedPromotionStudentId);
     if (student) await savePromotionReview(student);
+  });
+
+  document.querySelector('#curriculum-student')?.addEventListener('change', async (event) => {
+    const id = (event.target as HTMLSelectElement).value;
+    const student = students.find((item) => item.id === id);
+    if (!student) return;
+    selectedStudentId = student.id;
+    progressYear = student.current_year;
+    await openStudentProgress(student);
   });
 
   document.querySelectorAll<HTMLButtonElement>('[data-progress-year]').forEach((button) => {
