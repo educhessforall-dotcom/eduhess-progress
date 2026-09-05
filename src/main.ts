@@ -52,6 +52,427 @@ let progressYear = 1;
 let lessons: Lesson[] = [];
 let lessonProgress: Record<string, LessonProgress> = {};
 
+
+type AcademicYear = {
+  id: string;
+  academy_id: string;
+  year_label: string;
+  starts_on: string | null;
+  ends_on: string | null;
+  status: 'PLANNED' | 'OPEN' | 'CLOSED';
+};
+
+type AssessmentType = {
+  id: string;
+  code: string;
+  name: string;
+  max_marks: number;
+  timing: string | null;
+};
+
+type AssessmentRecord = {
+  id?: string;
+  student_id: string;
+  academic_year_id: string;
+  assessment_type_id: string;
+  marks: number;
+  exam_date: string | null;
+  entered_by: string | null;
+  verified_by: string | null;
+  status: 'DRAFT' | 'SUBMITTED' | 'VERIFIED';
+};
+
+type PracticalAssessment = {
+  id?: string;
+  student_id: string;
+  academic_year_id: string;
+  marks: number;
+  max_marks: number;
+  examiner_id: string | null;
+  exam_date: string | null;
+  notes: string | null;
+};
+
+let academicYears: AcademicYear[] = [];
+let assessmentTypes: AssessmentType[] = [];
+let assessmentRecords: AssessmentRecord[] = [];
+let practicalAssessment: PracticalAssessment | null = null;
+let selectedAssessmentStudentId = '';
+let selectedAssessmentYear = 0;
+
+const assessmentOrder = ['CP1', 'MID', 'CP2', 'FINAL', 'HOMEWORK'];
+
+async function loadAcademicYears() {
+  const { data, error } = await supabase
+    .from('academic_years')
+    .select('id, academy_id, year_label, starts_on, ends_on, status')
+    .eq('academy_id', academyId)
+    .order('year_label', { ascending: false });
+
+  if (error) throw new Error(error.message);
+
+  academicYears = (data ?? []) as AcademicYear[];
+
+  if (!academicYears.length) {
+    const { data: created, error: createError } = await supabase
+      .from('academic_years')
+      .insert({
+        academy_id: academyId,
+        year_label: '2026-2027',
+        status: 'OPEN',
+      })
+      .select('id, academy_id, year_label, starts_on, ends_on, status')
+      .single();
+
+    if (createError) throw new Error(createError.message);
+    academicYears = [created as AcademicYear];
+  }
+}
+
+async function loadAssessmentTypes() {
+  const { data, error } = await supabase
+    .from('assessment_types')
+    .select('id, code, name, max_marks, timing');
+
+  if (error) throw new Error(error.message);
+
+  assessmentTypes = ((data ?? []) as AssessmentType[]).sort(
+    (a, b) => assessmentOrder.indexOf(a.code) - assessmentOrder.indexOf(b.code)
+  );
+}
+
+async function loadStudentAssessments(studentId: string, yearNumber: number) {
+  if (!academicYears.length) await loadAcademicYears();
+
+  const selectedYearRecord =
+    academicYears.find((year) => year.year_label === `${yearNumber === 6 ? '2026-2027' : year.year_label}`) ??
+    academicYears[0];
+
+  // Assessment years are academy academic years. For now the UI uses the
+  // selected academy academic year and the student's curriculum year separately.
+  const academicYearId = selectedYearRecord.id;
+
+  const { data, error } = await supabase
+    .from('assessments')
+    .select('id, student_id, academic_year_id, assessment_type_id, marks, exam_date, entered_by, verified_by, status, assessment_types(code, name, max_marks, timing)')
+    .eq('student_id', studentId)
+    .eq('academic_year_id', academicYearId);
+
+  if (error) throw new Error(error.message);
+
+  assessmentRecords = (data ?? []).map((row: any) => ({
+    id: row.id,
+    student_id: row.student_id,
+    academic_year_id: row.academic_year_id,
+    assessment_type_id: row.assessment_type_id,
+    marks: Number(row.marks),
+    exam_date: row.exam_date,
+    entered_by: row.entered_by,
+    verified_by: row.verified_by,
+    status: row.status,
+  })) as AssessmentRecord[];
+
+  const { data: practical, error: practicalError } = await supabase
+    .from('practical_assessments')
+    .select('id, student_id, academic_year_id, marks, max_marks, examiner_id, exam_date, notes')
+    .eq('student_id', studentId)
+    .eq('academic_year_id', academicYearId)
+    .maybeSingle();
+
+  if (practicalError) throw new Error(practicalError.message);
+
+  practicalAssessment = practical ? practical as PracticalAssessment : null;
+  selectedAssessmentYear = yearNumber;
+}
+
+function currentAcademicYear(): AcademicYear | undefined {
+  return academicYears[0];
+}
+
+function assessmentRecordFor(type: AssessmentType): AssessmentRecord | undefined {
+  return assessmentRecords.find((record) => record.assessment_type_id === type.id);
+}
+
+function assessmentTotal(): number {
+  return assessmentRecords.reduce((sum, record) => sum + Number(record.marks || 0), 0);
+}
+
+async function saveAssessment(type: AssessmentType, student: Student) {
+  const year = currentAcademicYear();
+  if (!year) throw new Error('No academic year is available.');
+
+  const row = document.querySelector<HTMLElement>(`[data-assessment-row="${type.id}"]`);
+  const marksInput = row?.querySelector<HTMLInputElement>('[data-assessment-marks]');
+  const dateInput = row?.querySelector<HTMLInputElement>('[data-assessment-date]');
+  const statusInput = row?.querySelector<HTMLSelectElement>('[data-assessment-status]');
+  const button = row?.querySelector<HTMLButtonElement>('[data-save-assessment]');
+
+  const rawMarks = marksInput?.value.trim() ?? '';
+  const marks = Number(rawMarks);
+
+  if (rawMarks === '' || !Number.isFinite(marks)) {
+    window.alert(`Please enter marks for ${type.name}.`);
+    return;
+  }
+
+  if (marks < 0 || marks > Number(type.max_marks)) {
+    window.alert(`${type.name} must be between 0 and ${type.max_marks}.`);
+    return;
+  }
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Saving…';
+  }
+
+  const { data: userData } = await supabase.auth.getUser();
+
+  const payload = {
+    student_id: student.id,
+    academic_year_id: year.id,
+    assessment_type_id: type.id,
+    marks,
+    exam_date: dateInput?.value || null,
+    entered_by: userData.user?.id ?? null,
+    status: (statusInput?.value || 'DRAFT') as AssessmentRecord['status'],
+  };
+
+  const { data, error } = await supabase
+    .from('assessments')
+    .upsert(payload, { onConflict: 'student_id,academic_year_id,assessment_type_id' })
+    .select('id, student_id, academic_year_id, assessment_type_id, marks, exam_date, entered_by, verified_by, status')
+    .single();
+
+  if (error) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Save';
+    }
+    window.alert(`Unable to save assessment.\n\n${error.message}`);
+    return;
+  }
+
+  const existing = assessmentRecords.findIndex(
+    (record) => record.assessment_type_id === type.id
+  );
+
+  if (existing >= 0) assessmentRecords[existing] = data as AssessmentRecord;
+  else assessmentRecords.push(data as AssessmentRecord);
+
+  render();
+}
+
+async function savePracticalAssessment(student: Student) {
+  const year = currentAcademicYear();
+  if (!year) throw new Error('No academic year is available.');
+
+  const marksInput = document.querySelector<HTMLInputElement>('#practical-marks');
+  const dateInput = document.querySelector<HTMLInputElement>('#practical-date');
+  const notesInput = document.querySelector<HTMLTextAreaElement>('#practical-notes');
+  const button = document.querySelector<HTMLButtonElement>('#save-practical');
+
+  const rawMarks = marksInput?.value.trim() ?? '';
+  const marks = Number(rawMarks);
+
+  if (rawMarks === '' || !Number.isFinite(marks) || marks < 0 || marks > 30) {
+    window.alert('Practical board marks must be between 0 and 30.');
+    return;
+  }
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Saving…';
+  }
+
+  const { data: userData } = await supabase.auth.getUser();
+
+  const payload = {
+    student_id: student.id,
+    academic_year_id: year.id,
+    marks,
+    max_marks: 30,
+    examiner_id: userData.user?.id ?? null,
+    exam_date: dateInput?.value || null,
+    notes: notesInput?.value.trim() || null,
+  };
+
+  const { data, error } = await supabase
+    .from('practical_assessments')
+    .upsert(payload, { onConflict: 'student_id,academic_year_id' })
+    .select('id, student_id, academic_year_id, marks, max_marks, examiner_id, exam_date, notes')
+    .single();
+
+  if (error) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Save Practical Score';
+    }
+    window.alert(`Unable to save practical assessment.\n\n${error.message}`);
+    return;
+  }
+
+  practicalAssessment = data as PracticalAssessment;
+  render();
+}
+
+async function openAssessments(studentId?: string) {
+  currentView = 'assessments';
+  selectedAssessmentStudentId = studentId || selectedAssessmentStudentId || students[0]?.id || '';
+
+  app.innerHTML = '<div class="loading-panel">Loading assessments…</div>';
+
+  try {
+    await loadAcademicYears();
+    await loadAssessmentTypes();
+
+    const student = students.find((item) => item.id === selectedAssessmentStudentId);
+    if (student) {
+      await loadStudentAssessments(student.id, student.current_year);
+    }
+
+    render();
+  } catch (error) {
+    app.innerHTML = `
+      <div class="academy-shell">
+        <main class="main-content">
+          <section class="panel error-panel">
+            <p class="eyebrow">ASSESSMENTS</p>
+            <h2>Unable to load assessments</h2>
+            <p>${escapeHtml(error instanceof Error ? error.message : 'Unable to load assessments.')}</p>
+            <button class="primary-button" id="retry-assessments">Try Again</button>
+          </section>
+        </main>
+      </div>
+    `;
+    document.querySelector('#retry-assessments')?.addEventListener('click', () => openAssessments(selectedAssessmentStudentId));
+  }
+}
+
+function assessmentsView(): string {
+  const student = students.find((item) => item.id === selectedAssessmentStudentId);
+  const year = currentAcademicYear();
+  const total = assessmentTotal();
+  const practical = Number(practicalAssessment?.marks ?? 0);
+  const allFiveEntered = assessmentTypes
+    .filter((type) => assessmentOrder.includes(type.code))
+    .every((type) => assessmentRecordFor(type));
+
+  if (!student) {
+    return `
+      <header class="topbar"><div><p class="eyebrow">ACADEMY MANAGEMENT</p><h2>Assessments</h2></div></header>
+      <section class="panel empty-state">
+        <div class="empty-icon">✓</div>
+        <h3>No students available</h3>
+        <p>Add a student first, then assessment records can be entered.</p>
+        <button class="primary-button" data-action="students">View Students</button>
+      </section>
+    `;
+  }
+
+  return `
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">ACADEMY MANAGEMENT</p>
+        <h2>Assessments</h2>
+      </div>
+      <div class="admin-area">
+        <div class="admin-avatar">EA</div>
+        <div><strong>Academy Admin</strong><span>Assessment Entry</span></div>
+      </div>
+    </header>
+
+    <section class="page-heading">
+      <div>
+        <p class="eyebrow">ANNUAL ASSESSMENT RECORD</p>
+        <h3>${escapeHtml(studentName(student))}</h3>
+        <p>${escapeHtml(student.student_code)} · Curriculum Year ${student.current_year}</p>
+      </div>
+      <button class="secondary-button" data-action="back-students">← Back to Students</button>
+    </section>
+
+    <section class="assessment-toolbar panel">
+      <div>
+        <label class="assessment-select-label">
+          <span>Student</span>
+          <select id="assessment-student">
+            ${students.map((item) => `<option value="${item.id}" ${item.id === student.id ? 'selected' : ''}>${escapeHtml(studentName(item))} — ${escapeHtml(item.student_code)}</option>`).join('')}
+          </select>
+        </label>
+      </div>
+      <div class="assessment-year-box">
+        <span>Academic Year</span>
+        <strong>${escapeHtml(year?.year_label ?? 'Not set')}</strong>
+      </div>
+    </section>
+
+    <section class="stats-grid student-stats">
+      <article class="stat-card"><div class="stat-icon">Σ</div><div><span>ANNUAL ACADEMIC SCORE</span><strong>${total} / 275</strong><small>Five assessment components</small></div></article>
+      <article class="stat-card"><div class="stat-icon">♙</div><div><span>PRACTICAL BOARD</span><strong>${practical} / 30</strong><small>Required for promotion</small></div></article>
+      <article class="stat-card"><div class="stat-icon">✓</div><div><span>MARKS COMPLETE</span><strong>${allFiveEntered ? 'Yes' : 'No'}</strong><small>All five annual components</small></div></article>
+      <article class="stat-card"><div class="stat-icon">★</div><div><span>PROMOTION THRESHOLD</span><strong>110 / 275</strong><small>Plus practical minimum</small></div></article>
+    </section>
+
+    <section class="panel assessments-panel">
+      <div class="panel-header">
+        <div><p class="eyebrow">275-MARK ANNUAL STRUCTURE</p><h3>Assessment Components</h3><p>Enter marks according to the EduChess academy assessment policy.</p></div>
+        <span class="badge">275 Marks</span>
+      </div>
+
+      <div class="assessment-list">
+        ${assessmentTypes.filter((type) => assessmentOrder.includes(type.code)).map((type) => {
+          const record = assessmentRecordFor(type);
+          return `
+            <article class="assessment-row" data-assessment-row="${type.id}">
+              <div class="assessment-main">
+                <div class="assessment-title">
+                  <div>
+                    <span class="assessment-code">${escapeHtml(type.code)}</span>
+                    <h4>${escapeHtml(type.name)}</h4>
+                  </div>
+                  <span class="badge">${type.max_marks} marks</span>
+                </div>
+                <p>${escapeHtml(type.timing ?? '')}</p>
+              </div>
+
+              <div class="assessment-fields">
+                <label><span>Marks</span><input type="number" min="0" max="${type.max_marks}" step="0.5" data-assessment-marks value="${record ? record.marks : ''}" placeholder="0–${type.max_marks}"></label>
+                <label><span>Date</span><input type="date" data-assessment-date value="${escapeHtml(record?.exam_date)}"></label>
+                <label><span>Status</span><select data-assessment-status><option value="DRAFT" ${record?.status === 'DRAFT' || !record ? 'selected' : ''}>Draft</option><option value="SUBMITTED" ${record?.status === 'SUBMITTED' ? 'selected' : ''}>Submitted</option><option value="VERIFIED" ${record?.status === 'VERIFIED' ? 'selected' : ''}>Verified</option></select></label>
+                <button class="primary-button assessment-save" data-save-assessment type="button">Save</button>
+              </div>
+            </article>
+          `;
+        }).join('')}
+      </div>
+    </section>
+
+    <section class="panel practical-assessment-panel">
+      <div class="panel-header">
+        <div><p class="eyebrow">PRACTICAL BOARD</p><h3>Practical Assessment</h3><p>Maximum 30 marks. Year-specific minimums are applied later by Promotion.</p></div>
+        <span class="badge">30 Marks</span>
+      </div>
+
+      <div class="practical-form">
+        <label><span>Practical Board Marks</span><input id="practical-marks" type="number" min="0" max="30" step="0.5" value="${practicalAssessment ? practicalAssessment.marks : ''}" placeholder="0–30"></label>
+        <label><span>Exam Date</span><input id="practical-date" type="date" value="${escapeHtml(practicalAssessment?.exam_date)}"></label>
+        <label class="practical-notes"><span>Examiner Notes</span><textarea id="practical-notes" rows="3" placeholder="Record practical observations…">${escapeHtml(practicalAssessment?.notes)}</textarea></label>
+        <button class="primary-button" id="save-practical" type="button">Save Practical Score</button>
+      </div>
+    </section>
+
+    <section class="panel assessment-policy-panel">
+      <div class="panel-header"><div><p class="eyebrow">ACADEMY POLICY</p><h3>Assessment Structure</h3></div></div>
+      <div class="policy-grid">
+        <div><strong>Checkpoint 1</strong><span>Week 10 · 25 marks</span></div>
+        <div><strong>Mid-Year Examination</strong><span>Week 20 · 100 marks</span></div>
+        <div><strong>Checkpoint 2</strong><span>Week 30 · 25 marks</span></div>
+        <div><strong>Final Examination</strong><span>Weeks 37–40 · 100 marks</span></div>
+        <div><strong>Homework & Class Performance</strong><span>Continuous · 25 marks</span></div>
+      </div>
+    </section>
+  `;
+}
+
 const curriculumYears = [
   ['Foundation', 'Rules, board vision, simple tactics and basic mates'],
   ['Early Development', 'Pattern growth, opening logic and attack basics'],
@@ -382,7 +803,7 @@ function dashboardView(): string {
         <div class="quick-actions">
           <button data-action="add-student">＋ Add Student</button>
           <button data-action="students">♙ View Students</button>
-          <button>✓ Record Assessment</button>
+          <button data-action="record-assessment">✓ Record Assessment</button>
           <button>◷ Mark Attendance</button>
         </div>
       </article>
@@ -985,7 +1406,7 @@ function render() {
             ▤ <span>Curriculum</span>
           </button>
 
-          <button class="nav-item" data-view="assessments">
+          <button class="nav-item ${currentView === 'assessments' ? 'active' : ''}" data-view="assessments">
             ✓ <span>Assessments</span>
           </button>
 
@@ -1021,7 +1442,9 @@ function render() {
             ? studentsView()
             : currentView === 'student-progress' && selectedStudent()
               ? studentProgressView(selectedStudent()!)
-              : dashboardView()
+              : currentView === 'assessments'
+                ? assessmentsView()
+                : dashboardView()
         }
 
       </main>
@@ -1040,6 +1463,8 @@ function attachEvents() {
       if (view === 'dashboard' || view === 'students') {
         currentView = view;
         render();
+      } else if (view === 'assessments') {
+        void openAssessments();
       }
     });
   });
@@ -1084,6 +1509,34 @@ function attachEvents() {
       const student = students.find((item) => item.id === id);
       if (student) { progressYear = student.current_year; await openStudentProgress(student); }
     });
+  });
+
+
+  document.querySelector('[data-action="record-assessment"]')?.addEventListener('click', () => {
+    void openAssessments();
+  });
+
+  const assessmentStudentSelect =
+    document.querySelector<HTMLSelectElement>('#assessment-student');
+
+  assessmentStudentSelect?.addEventListener('change', async () => {
+    selectedAssessmentStudentId = assessmentStudentSelect.value;
+    const student = students.find((item) => item.id === selectedAssessmentStudentId);
+    if (student) await openAssessments(student.id);
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('[data-save-assessment]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const row = button.closest<HTMLElement>('[data-assessment-row]');
+      const type = assessmentTypes.find((item) => item.id === row?.dataset.assessmentRow);
+      const student = students.find((item) => item.id === selectedAssessmentStudentId);
+      if (type && student) await saveAssessment(type, student);
+    });
+  });
+
+  document.querySelector('#save-practical')?.addEventListener('click', async () => {
+    const student = students.find((item) => item.id === selectedAssessmentStudentId);
+    if (student) await savePracticalAssessment(student);
   });
 
   document.querySelectorAll<HTMLButtonElement>('[data-progress-year]').forEach((button) => {
