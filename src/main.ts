@@ -93,12 +93,43 @@ type PracticalAssessment = {
   notes: string | null;
 };
 
+type PromotionRule = {
+  id: string;
+  year_number: number;
+  overall_pass_marks: number;
+  practical_minimum: number;
+  major_exam_pass_marks: number;
+  checkpoint_pass_marks: number;
+};
+
+type PromotionReview = {
+  id?: string;
+  student_id: string;
+  academic_year_id: string;
+  annual_total: number | null;
+  practical_score: number | null;
+  academic_requirement_met: boolean;
+  practical_requirement_met: boolean;
+  attendance_percentage: number | null;
+  homework_quality: string | null;
+  discipline_rating: string | null;
+  game_quality_rating: string | null;
+  coach_recommendation: string | null;
+  decision: 'PROMOTE' | 'PROMOTE_WITH_SUPPORT' | 'REPEAT_SELECTED_MODULES' | 'REPEAT_YEAR' | null;
+  review_notes: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+};
+
 let academicYears: AcademicYear[] = [];
 let assessmentTypes: AssessmentType[] = [];
 let assessmentRecords: AssessmentRecord[] = [];
 let practicalAssessment: PracticalAssessment | null = null;
 let selectedAssessmentStudentId = '';
 let selectedAssessmentYear = 0;
+let promotionRules: PromotionRule[] = [];
+let promotionReview: PromotionReview | null = null;
+let selectedPromotionStudentId = '';
 
 const assessmentOrder = ['CP1', 'MID', 'CP2', 'FINAL', 'HOMEWORK'];
 
@@ -473,6 +504,282 @@ function assessmentsView(): string {
   `;
 }
 
+
+async function loadPromotionRules() {
+  const { data, error } = await supabase
+    .from('promotion_rules')
+    .select('id, year_number, overall_pass_marks, practical_minimum, major_exam_pass_marks, checkpoint_pass_marks')
+    .order('year_number', { ascending: true });
+
+  if (error) throw new Error(error.message);
+  promotionRules = (data ?? []).map((row: any) => ({
+    id: row.id,
+    year_number: Number(row.year_number),
+    overall_pass_marks: Number(row.overall_pass_marks),
+    practical_minimum: Number(row.practical_minimum),
+    major_exam_pass_marks: Number(row.major_exam_pass_marks),
+    checkpoint_pass_marks: Number(row.checkpoint_pass_marks),
+  }));
+}
+
+function promotionRuleFor(yearNumber: number): PromotionRule | undefined {
+  return promotionRules.find((rule) => rule.year_number === yearNumber);
+}
+
+async function loadPromotionReview(studentId: string) {
+  const year = currentAcademicYear();
+  if (!year) throw new Error('No academic year is available.');
+
+  const { data, error } = await supabase
+    .from('promotion_reviews')
+    .select('id, student_id, academic_year_id, annual_total, practical_score, academic_requirement_met, practical_requirement_met, attendance_percentage, homework_quality, discipline_rating, game_quality_rating, coach_recommendation, decision, review_notes, reviewed_by, reviewed_at')
+    .eq('student_id', studentId)
+    .eq('academic_year_id', year.id)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  promotionReview = data as PromotionReview | null;
+}
+
+function promotionAssessmentState(student: Student) {
+  const rule = promotionRuleFor(student.current_year);
+  const recordsByCode = new Map<string, AssessmentRecord>();
+
+  for (const type of assessmentTypes) {
+    const record = assessmentRecordFor(type);
+    if (record) recordsByCode.set(type.code, record);
+  }
+
+  const cp1 = recordsByCode.get('CP1');
+  const mid = recordsByCode.get('MID');
+  const cp2 = recordsByCode.get('CP2');
+  const final = recordsByCode.get('FINAL');
+  const homework = recordsByCode.get('HOMEWORK');
+  const total = assessmentTotal();
+  const practical = Number(practicalAssessment?.marks ?? 0);
+
+  const allEntered = Boolean(cp1 && mid && cp2 && final && homework && practicalAssessment);
+  const checkpointPass = Boolean(
+    rule && cp1 && cp2 && cp1.marks >= rule.checkpoint_pass_marks && cp2.marks >= rule.checkpoint_pass_marks
+  );
+  const majorExamPass = Boolean(
+    rule && mid && final && mid.marks >= rule.major_exam_pass_marks && final.marks >= rule.major_exam_pass_marks
+  );
+  const academicRequirementMet = Boolean(rule && allEntered && total >= rule.overall_pass_marks && checkpointPass && majorExamPass);
+  const practicalRequirementMet = Boolean(rule && practical >= rule.practical_minimum);
+  const ready = Boolean(allEntered && academicRequirementMet && practicalRequirementMet);
+
+  return {
+    rule,
+    total,
+    practical,
+    allEntered,
+    checkpointPass,
+    majorExamPass,
+    academicRequirementMet,
+    practicalRequirementMet,
+    ready,
+  };
+}
+
+async function openPromotion(studentId?: string) {
+  currentView = 'promotion';
+  selectedPromotionStudentId = studentId || selectedPromotionStudentId || students[0]?.id || '';
+  app.innerHTML = '<div class="loading-panel">Loading promotion readiness…</div>';
+
+  try {
+    await loadAcademicYears();
+    await loadAssessmentTypes();
+    await loadPromotionRules();
+
+    const student = students.find((item) => item.id === selectedPromotionStudentId);
+    if (student) {
+      await loadStudentAssessments(student.id, student.current_year);
+      await loadPromotionReview(student.id);
+    }
+    render();
+  } catch (error) {
+    app.innerHTML = `
+      <div class="academy-shell">
+        <main class="main-content">
+          <section class="panel error-panel">
+            <p class="eyebrow">PROMOTION</p>
+            <h2>Unable to load promotion readiness</h2>
+            <p>${escapeHtml(error instanceof Error ? error.message : 'Unable to load promotion readiness.')}</p>
+            <button class="primary-button" id="retry-promotion">Try Again</button>
+          </section>
+        </main>
+      </div>
+    `;
+    document.querySelector('#retry-promotion')?.addEventListener('click', () => openPromotion(selectedPromotionStudentId));
+  }
+}
+
+async function savePromotionReview(student: Student) {
+  const year = currentAcademicYear();
+  if (!year) throw new Error('No academic year is available.');
+
+  const state = promotionAssessmentState(student);
+  const attendance = document.querySelector<HTMLInputElement>('#promotion-attendance')?.value.trim() ?? '';
+  const homeworkQuality = document.querySelector<HTMLSelectElement>('#promotion-homework')?.value || null;
+  const disciplineRating = document.querySelector<HTMLSelectElement>('#promotion-discipline')?.value || null;
+  const gameQualityRating = document.querySelector<HTMLSelectElement>('#promotion-game-quality')?.value || null;
+  const recommendation = document.querySelector<HTMLSelectElement>('#promotion-recommendation')?.value || null;
+  const decision = document.querySelector<HTMLSelectElement>('#promotion-decision')?.value || null;
+  const notes = document.querySelector<HTMLTextAreaElement>('#promotion-notes')?.value.trim() || null;
+  const button = document.querySelector<HTMLButtonElement>('#save-promotion-review');
+
+  const attendanceValue = attendance === '' ? null : Number(attendance);
+  if (attendanceValue !== null && (!Number.isFinite(attendanceValue) || attendanceValue < 0 || attendanceValue > 100)) {
+    window.alert('Attendance percentage must be between 0 and 100.');
+    return;
+  }
+
+  if (button) { button.disabled = true; button.textContent = 'Saving…'; }
+  const { data: userData } = await supabase.auth.getUser();
+
+  const payload = {
+    student_id: student.id,
+    academic_year_id: year.id,
+    annual_total: state.total,
+    practical_score: state.practical,
+    academic_requirement_met: state.academicRequirementMet,
+    practical_requirement_met: state.practicalRequirementMet,
+    attendance_percentage: attendanceValue,
+    homework_quality: homeworkQuality,
+    discipline_rating: disciplineRating,
+    game_quality_rating: gameQualityRating,
+    coach_recommendation: recommendation,
+    decision: decision || null,
+    review_notes: notes,
+    reviewed_by: userData.user?.id ?? null,
+    reviewed_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await supabase
+    .from('promotion_reviews')
+    .upsert(payload, { onConflict: 'student_id,academic_year_id' })
+    .select('id, student_id, academic_year_id, annual_total, practical_score, academic_requirement_met, practical_requirement_met, attendance_percentage, homework_quality, discipline_rating, game_quality_rating, coach_recommendation, decision, review_notes, reviewed_by, reviewed_at')
+    .single();
+
+  if (error) {
+    if (button) { button.disabled = false; button.textContent = 'Save Promotion Review'; }
+    window.alert(`Unable to save promotion review.\n\n${error.message}`);
+    return;
+  }
+
+  promotionReview = data as PromotionReview;
+  render();
+}
+
+function promotionView(): string {
+  const student = students.find((item) => item.id === selectedPromotionStudentId);
+  const year = currentAcademicYear();
+
+  if (!student) {
+    return `
+      <header class="topbar"><div><p class="eyebrow">ACADEMY MANAGEMENT</p><h2>Promotion</h2></div></header>
+      <section class="panel empty-state">
+        <div class="empty-icon">★</div>
+        <h3>No students available</h3>
+        <p>Add a student and complete their assessment records before reviewing promotion.</p>
+        <button class="primary-button" data-action="students">View Students</button>
+      </section>
+    `;
+  }
+
+  const state = promotionAssessmentState(student);
+  const rule = state.rule;
+  const decision = promotionReview?.decision ?? '';
+  const readinessClass = state.ready ? 'ready' : state.allEntered ? 'review' : 'pending';
+  const readinessTitle = state.ready ? 'Ready for Promotion' : state.allEntered ? 'Review Required' : 'Awaiting Assessment Records';
+  const readinessText = state.ready
+    ? `All required academic and practical thresholds are met for Year ${student.current_year}.`
+    : state.allEntered
+      ? 'Assessment records are present, but one or more promotion requirements are not yet met.'
+      : 'Complete all five annual assessment components and the practical board assessment first.';
+
+  const checks = [
+    ['Annual academic score', `${state.total} / 275`, Boolean(rule && state.total >= rule.overall_pass_marks), rule ? `Minimum ${rule.overall_pass_marks}` : 'Rule unavailable'],
+    ['Practical board', `${state.practical} / 30`, state.practicalRequirementMet, rule ? `Minimum ${rule.practical_minimum}` : 'Rule unavailable'],
+    ['Checkpoint standards', state.checkpointPass ? 'Passed' : 'Pending / Not met', state.checkpointPass, rule ? `${rule.checkpoint_pass_marks}+ each` : 'Rule unavailable'],
+    ['Major exam standards', state.majorExamPass ? 'Passed' : 'Pending / Not met', state.majorExamPass, rule ? `${rule.major_exam_pass_marks}+ each` : 'Rule unavailable'],
+  ];
+
+  return `
+    <header class="topbar">
+      <div><p class="eyebrow">ACADEMY MANAGEMENT</p><h2>Promotion</h2></div>
+      <div class="admin-area"><div class="admin-avatar">EA</div><div><strong>Academy Admin</strong><span>Promotion Review</span></div></div>
+    </header>
+
+    <section class="page-heading promotion-page-heading">
+      <div>
+        <p class="eyebrow">ANNUAL PROMOTION REVIEW</p>
+        <h3>${escapeHtml(studentName(student))}</h3>
+        <p>${escapeHtml(student.student_code)} · Curriculum Year ${student.current_year} · ${escapeHtml(year?.year_label ?? 'Academic year not set')}</p>
+      </div>
+      <button class="secondary-button" data-action="students">← Back to Students</button>
+    </section>
+
+    <section class="promotion-toolbar panel">
+      <label class="assessment-select-label"><span>Student</span><select id="promotion-student">
+        ${students.map((item) => `<option value="${item.id}" ${item.id === student.id ? 'selected' : ''}>${escapeHtml(studentName(item))} — Year ${item.current_year}</option>`).join('')}
+      </select></label>
+      <div class="promotion-year-summary"><span>Current Stage</span><strong>Year ${student.current_year}</strong><small>${escapeHtml(curriculumYears[student.current_year - 1]?.[0] ?? 'Academy Programme')}</small></div>
+    </section>
+
+    <section class="promotion-readiness ${readinessClass}">
+      <div class="promotion-status-icon">${state.ready ? '✓' : state.allEntered ? '!' : '○'}</div>
+      <div><p class="eyebrow">PROMOTION STATUS</p><h3>${readinessTitle}</h3><p>${readinessText}</p></div>
+      <div class="promotion-status-score"><span>Academic</span><strong>${state.total} / 275</strong><small>Practical ${state.practical} / 30</small></div>
+    </section>
+
+    <section class="stats-grid promotion-stats">
+      <article class="stat-card"><div class="stat-icon">Σ</div><div><span>ACADEMIC SCORE</span><strong>${state.total} / 275</strong><small>${rule ? `Pass mark ${rule.overall_pass_marks}` : 'Rule unavailable'}</small></div></article>
+      <article class="stat-card"><div class="stat-icon">♙</div><div><span>PRACTICAL BOARD</span><strong>${state.practical} / 30</strong><small>${rule ? `Minimum ${rule.practical_minimum}` : 'Rule unavailable'}</small></div></article>
+      <article class="stat-card"><div class="stat-icon">✓</div><div><span>ACADEMIC REQUIREMENT</span><strong>${state.academicRequirementMet ? 'Met' : 'Not met'}</strong><small>All assessment standards</small></div></article>
+      <article class="stat-card"><div class="stat-icon">★</div><div><span>FINAL READINESS</span><strong>${state.ready ? 'READY' : 'PENDING'}</strong><small>${state.allEntered ? 'Review decision below' : 'Complete records first'}</small></div></article>
+    </section>
+
+    <section class="promotion-grid">
+      <div class="panel promotion-checks-panel">
+        <div class="panel-header"><div><p class="eyebrow">PROMOTION RULES</p><h3>Academic & Practical Checks</h3><p>Year-specific standards are evaluated from the recorded assessment data.</p></div><span class="badge">Year ${student.current_year}</span></div>
+        <div class="promotion-check-list">
+          ${checks.map(([label, value, passed, detail]) => `
+            <div class="promotion-check ${passed ? 'passed' : 'not-passed'}">
+              <div class="check-icon">${passed ? '✓' : '!'}</div>
+              <div><strong>${label}</strong><span>${value}</span></div>
+              <small>${detail}</small>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <div class="panel progression-panel">
+        <div class="panel-header"><div><p class="eyebrow">NEXT STAGE</p><h3>Progression Path</h3></div></div>
+        <div class="stage-path">
+          <div class="stage-node current"><span>${String(student.current_year).padStart(2, '0')}</span><div><strong>${escapeHtml(curriculumYears[student.current_year - 1]?.[0] ?? 'Current Year')}</strong><small>Current curriculum year</small></div></div>
+          ${student.current_year < 6 ? `<div class="stage-arrow">↓</div><div class="stage-node next"><span>${String(student.current_year + 1).padStart(2, '0')}</span><div><strong>${escapeHtml(curriculumYears[student.current_year]?.[0] ?? 'Next Year')}</strong><small>Next programme stage</small></div></div>` : `<div class="stage-arrow">↓</div><div class="stage-node graduation"><span>★</span><div><strong>Academy Graduation</strong><small>Year 6 completion and graduation review</small></div></div>`}
+        </div>
+      </div>
+    </section>
+
+    <section class="panel promotion-review-panel">
+      <div class="panel-header"><div><p class="eyebrow">COACH REVIEW</p><h3>Promotion Decision</h3><p>Record the professional review after checking the academic and practical requirements.</p></div></div>
+      <div class="promotion-review-form">
+        <label><span>Attendance %</span><input id="promotion-attendance" type="number" min="0" max="100" step="0.1" value="${promotionReview?.attendance_percentage ?? ''}" placeholder="e.g. 92"></label>
+        <label><span>Homework Quality</span><select id="promotion-homework"><option value="">Select</option>${['EXCELLENT','GOOD','SATISFACTORY','NEEDS_SUPPORT'].map(v => `<option value="${v}" ${promotionReview?.homework_quality === v ? 'selected' : ''}>${v.replaceAll('_',' ')}</option>`).join('')}</select></label>
+        <label><span>Discipline Rating</span><select id="promotion-discipline"><option value="">Select</option>${['EXCELLENT','GOOD','SATISFACTORY','NEEDS_SUPPORT'].map(v => `<option value="${v}" ${promotionReview?.discipline_rating === v ? 'selected' : ''}>${v.replaceAll('_',' ')}</option>`).join('')}</select></label>
+        <label><span>Game Quality</span><select id="promotion-game-quality"><option value="">Select</option>${['EXCELLENT','GOOD','SATISFACTORY','NEEDS_SUPPORT'].map(v => `<option value="${v}" ${promotionReview?.game_quality_rating === v ? 'selected' : ''}>${v.replaceAll('_',' ')}</option>`).join('')}</select></label>
+        <label><span>Coach Recommendation</span><select id="promotion-recommendation"><option value="">Select</option>${['PROMOTE','PROMOTE_WITH_SUPPORT','REPEAT_SELECTED_MODULES','REPEAT_YEAR'].map(v => `<option value="${v}" ${promotionReview?.coach_recommendation === v ? 'selected' : ''}>${v.replaceAll('_',' ')}</option>`).join('')}</select></label>
+        <label><span>Final Decision</span><select id="promotion-decision"><option value="">Select decision</option>${['PROMOTE','PROMOTE_WITH_SUPPORT','REPEAT_SELECTED_MODULES','REPEAT_YEAR'].map(v => `<option value="${v}" ${decision === v ? 'selected' : ''}>${v.replaceAll('_',' ')}</option>`).join('')}</select></label>
+        <label class="promotion-notes"><span>Review Notes</span><textarea id="promotion-notes" rows="4" placeholder="Record strengths, concerns, support plan or progression notes…">${escapeHtml(promotionReview?.review_notes)}</textarea></label>
+        <div class="promotion-review-actions"><div><strong>System readiness: ${state.ready ? 'READY FOR PROMOTION' : 'NOT YET READY'}</strong><span>The final decision is recorded by the academy reviewer.</span></div><button class="primary-button" id="save-promotion-review">Save Promotion Review</button></div>
+      </div>
+    </section>
+  `;
+}
+
 const curriculumYears = [
   ['Foundation', 'Rules, board vision, simple tactics and basic mates'],
   ['Early Development', 'Pattern growth, opening logic and attack basics'],
@@ -642,184 +949,199 @@ function dashboardView(): string {
   const activeStudents = students.filter((s) => s.status === 'ACTIVE').length;
   const pausedStudents = students.filter((s) => s.status === 'PAUSED').length;
   const graduatedStudents = students.filter((s) => s.status === 'GRADUATED').length;
-  const currentYear = academicYears[0]?.year_label ?? '2026-2027';
-
+  const currentYear = academicYears[0]?.year_label ?? '2026–2027';
+  const activeYearStudents = students.filter((s) => s.status === 'ACTIVE');
   const yearCounts = [1, 2, 3, 4, 5, 6].map((year) => ({
     year,
     name: curriculumYears[year - 1][0],
     description: curriculumYears[year - 1][1],
-    students: students.filter((s) => s.status === 'ACTIVE' && s.current_year === year).length,
+    students: activeYearStudents.filter((s) => s.current_year === year).length,
   }));
 
   return `
-    <header class="topbar reference-topbar">
+    <header class="topbar dashboard-topbar">
       <div class="topbar-heading">
+        <span class="topbar-kicker">Academy Management</span>
         <h2>Dashboard</h2>
-        <span>Academy Management</span>
       </div>
-
-      <div class="topbar-brand">
-        <div class="topbar-brand-mark">♞</div>
-        <div><strong>EduChess</strong><span>ACADEMY</span></div>
-      </div>
-
       <div class="topbar-actions">
-        <div class="admin-profile">
+        <div class="academic-pill">
+          <span>Academic Year</span>
+          <strong>${escapeHtml(currentYear)}</strong>
+        </div>
+        <div class="admin-area">
           <div class="admin-avatar">EA</div>
           <div class="admin-copy">
             <strong>Academy Admin</strong>
             <span>Administrator</span>
           </div>
-          <span class="admin-chevron">⌄</span>
         </div>
-        <button class="notification-button" type="button" aria-label="Notifications">
-          ♟<span class="notification-count">3</span>
-        </button>
       </div>
     </header>
 
-    <div class="reference-dashboard">
-      <section class="reference-hero">
-        <div>
-          <p class="reference-eyebrow">WELCOME BACK</p>
-          <h1>Welcome back, Academy Admin</h1>
-          <p>Monitor student learning, curriculum progress, assessments and promotion readiness from one place.</p>
-          <div class="academic-year-badge">▣ <strong>ACADEMIC YEAR ${escapeHtml(currentYear)}</strong></div>
+    <div class="dashboard-page">
+      <section class="hero-banner">
+        <div class="hero-copy">
+          <span class="hero-overline">EDUCHESS ACADEMY</span>
+          <h1>Good morning, Academy Admin.</h1>
+          <p>Manage your academy, monitor student development and keep every stage of the six-year programme on track.</p>
+          <div class="hero-actions">
+            <button class="primary-button hero-primary" data-action="add-student">＋ Add Student</button>
+            <button class="secondary-button hero-secondary" data-action="students">View Students <span>→</span></button>
+          </div>
         </div>
-        <div class="hero-chess-watermark" aria-hidden="true">♟ ♞ ♜</div>
+        <div class="hero-mark" aria-hidden="true">
+          <div class="hero-board">
+            <span>♞</span><span></span><span>♟</span><span></span>
+            <span></span><span>♙</span><span></span><span>♘</span>
+            <span>♙</span><span></span><span>♙</span><span></span>
+            <span></span><span>♙</span><span></span><span>♙</span>
+          </div>
+        </div>
       </section>
 
-      <section class="reference-metrics">
-        <article class="reference-metric-card">
-          <div class="metric-card-title">OVERALL STUDENT<br>PROGRESS</div>
-          <div class="donut-wrap">
-            <div class="donut"><span>${students.length ? '0%' : '0%'}</span></div>
+      <section class="metric-grid" aria-label="Academy metrics">
+        <article class="metric-card">
+          <div class="metric-icon metric-icon-blue">♙</div>
+          <div class="metric-content">
+            <span class="metric-label">Active Students</span>
+            <strong>${activeStudents}</strong>
+            <small>${students.length} total student record${students.length === 1 ? '' : 's'}</small>
           </div>
-          <strong class="metric-big">${activeStudents} / ${students.length}</strong>
-          <span class="metric-sub">Students on Track</span>
+          <span class="metric-arrow">→</span>
         </article>
-
-        <article class="reference-metric-card topic-card">
-          <div class="metric-card-title">TOP LESSON TOPICS</div>
-          <div class="topic-icons">
-            <span>♜<small>Rooks</small></span>
-            <span>♞<small>Pawns</small></span>
-            <span>◕<small>Endings</small></span>
-            <span>✣<small>Tactics</small></span>
+        <article class="metric-card">
+          <div class="metric-icon metric-icon-slate">▤</div>
+          <div class="metric-content">
+            <span class="metric-label">Curriculum</span>
+            <strong>240</strong>
+            <small>Lessons across 6 programme years</small>
           </div>
-          <div class="topic-line"><span></span></div>
-          <p>Rook Endings <b>Academy focus</b></p>
-          <div class="topic-line soft"><span></span></div>
-          <p>Pins &amp; Skewers <b>Core tactics</b></p>
+          <span class="metric-arrow">→</span>
         </article>
-
-        <article class="reference-metric-card assessment-mini-card">
-          <div class="metric-card-title">ASSESSMENT SCORES</div>
-          <div class="empty-chart">
-            <span>100</span><span>75</span><span>50</span><span>25</span><span>0</span>
-            <div class="chart-bars">
-              <i style="height:18%"></i><i style="height:28%"></i><i style="height:12%"></i><i style="height:22%"></i><i style="height:15%"></i>
-            </div>
+        <article class="metric-card">
+          <div class="metric-icon metric-icon-gold">✓</div>
+          <div class="metric-content">
+            <span class="metric-label">Assessment Cycle</span>
+            <strong>5</strong>
+            <small>Annual assessment components</small>
           </div>
-          <div class="chart-labels"><span>CP1</span><span>CP2</span><span>Mid-Year</span><span>Final</span></div>
-          <small>Assessment records will appear here</small>
+          <span class="metric-arrow">→</span>
         </article>
-
-        <article class="reference-metric-card completion-card">
-          <div class="metric-card-title">CURRICULUM COMPLETION</div>
-          <div class="completion-row"><strong>Year 1</strong><span>0%</span></div>
-          <div class="completion-track"><span style="width:0%"></span></div>
-          <div class="completion-row"><strong>Year 2</strong><span>0%</span></div>
-          <div class="completion-track"><span style="width:0%"></span></div>
-          <div class="completion-row"><strong>Year 3</strong><span>0%</span></div>
-          <div class="completion-track"><span style="width:0%"></span></div>
-          <button class="reference-link" data-action="curriculum">View Curriculum <span>→</span></button>
+        <article class="metric-card">
+          <div class="metric-icon metric-icon-green">★</div>
+          <div class="metric-content">
+            <span class="metric-label">Promotion Standard</span>
+            <strong>110<span class="metric-denom"> / 275</span></strong>
+            <small>Plus year-specific practical minimum</small>
+          </div>
+          <span class="metric-arrow">→</span>
         </article>
       </section>
 
-      <section class="reference-main-grid">
-        <article class="reference-panel progress-tracker-panel">
-          <div class="reference-panel-header">
+      <section class="dashboard-columns">
+        <article class="dashboard-card programme-card">
+          <div class="card-heading">
             <div>
-              <p class="reference-eyebrow">STUDENT PROGRESS TRACKER</p>
-              <h2>Student Progress Tracker</h2>
+              <span class="section-label">Programme</span>
+              <h2>Six-Year Academy Pathway</h2>
+              <p>Track the complete learning journey from Foundation to Academy Mastery.</p>
             </div>
-            <button class="reference-link" data-action="students">View all students <span>→</span></button>
+            <span class="programme-total">240 lessons</span>
           </div>
 
-          ${
-            students.length
-              ? `<div class="progress-table">
-                  <div class="progress-table-head">
-                    <span>Student</span><span>Year</span><span>Current Lesson</span><span>Progress</span><span>Latest Score</span>
+          <div class="programme-list">
+            ${yearCounts.map((item) => `
+              <div class="programme-row">
+                <div class="programme-number">${String(item.year).padStart(2, '0')}</div>
+                <div class="programme-main">
+                  <div class="programme-title-line">
+                    <strong>${escapeHtml(item.name)}</strong>
+                    <span>${item.students} active student${item.students === 1 ? '' : 's'}</span>
                   </div>
-                  ${students.slice(0, 5).map((student) => `
-                    <div class="progress-table-row">
-                      <div class="progress-student">
-                        <div class="student-avatar">${escapeHtml(student.first_name.charAt(0))}</div>
-                        <div><strong>${escapeHtml(studentName(student))}</strong><small>Curriculum Year</small></div>
-                      </div>
-                      <span>Year ${student.current_year}</span>
-                      <span>Not started</span>
-                      <div class="mini-progress"><span style="width:0%"></span><small>0 / 40</small></div>
-                      <strong class="score-placeholder">—</strong>
-                    </div>
-                  `).join('')}
-                </div>`
-              : `<div class="reference-empty">
-                  <div class="empty-chess">♞</div>
-                  <h3>No students yet</h3>
-                  <p>Add your first student to begin tracking academy progress.</p>
-                  <button class="reference-gold-button" data-action="add-student">+ Add Student</button>
-                </div>`
-          }
+                  <p>${escapeHtml(item.description)}</p>
+                  <div class="programme-track"><span style="width:0%"></span></div>
+                </div>
+                <div class="programme-meta">
+                  <strong>0 / 40</strong>
+                  <span>lessons</span>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+
+          <div class="card-footer-action">
+            <button class="text-button" data-action="curriculum">Open Curriculum <span>→</span></button>
+          </div>
         </article>
 
-        <div class="reference-side-stack">
-          <article class="reference-panel achievements-panel">
-            <div class="reference-panel-header">
-              <div>
-                <p class="reference-eyebrow">ACADEMY</p>
-                <h2>Recent Achievements</h2>
-              </div>
+        <article class="dashboard-card operations-card">
+          <div class="card-heading compact-heading">
+            <div>
+              <span class="section-label">Academy Status</span>
+              <h2>Operations</h2>
             </div>
-            <div class="achievement-grid">
-              <div><span class="achievement-icon gold">♜</span><span>Completed<br>Foundation</span></div>
-              <div><span class="achievement-icon gold">✦</span><span>Perfect<br>Attendance</span></div>
-              <div><span class="achievement-icon green">✓</span><span>Assessment<br>Verified</span></div>
-              <div><span class="achievement-icon blue">★</span><span>Independent<br>Mastery</span></div>
-            </div>
-            <button class="reference-link" data-action="reports">View all achievements <span>→</span></button>
-          </article>
+            <span class="live-indicator"><i></i> Live</span>
+          </div>
 
-          <article class="reference-panel reminders-panel">
-            <div class="reference-panel-header">
-              <div>
-                <p class="reference-eyebrow">ACADEMY CALENDAR</p>
-                <h2>Upcoming Reminders</h2>
-              </div>
-            </div>
-            <div class="reminder-row"><span>▣</span><strong>Checkpoint 1 Assessments</strong><small>Week 10</small></div>
-            <div class="reminder-row"><span>▣</span><strong>Mid-Year Examinations</strong><small>Week 20</small></div>
-            <button class="reference-link" data-action="record-assessment">Open Assessments <span>→</span></button>
-          </article>
-        </div>
-      </section>
-
-      <section class="reference-footer-strip">
-        <div>
-          <span class="reference-eyebrow">PROGRAMME OVERVIEW</span>
-          <strong>Six-Year Academy Programme</strong>
-          <small>240 structured weekly lessons</small>
-        </div>
-        <div class="year-pills">
-          ${yearCounts.map((item) => `
-            <button class="year-pill ${item.year === 1 ? 'current' : ''}" data-action="curriculum">
-              <span>${String(item.year).padStart(2, '0')}</span>${escapeHtml(item.name)}
+          <div class="operations-list">
+            <button class="operation-item" data-action="students">
+              <span class="operation-icon">♙</span>
+              <span class="operation-copy"><strong>Student records</strong><small>${students.length} record${students.length === 1 ? '' : 's'} · ${activeStudents} active</small></span>
+              <span class="operation-status status-ready">Ready</span>
+              <span class="operation-chevron">›</span>
             </button>
-          `).join('')}
-        </div>
+            <button class="operation-item" data-action="record-assessment">
+              <span class="operation-icon">✓</span>
+              <span class="operation-copy"><strong>Assessments</strong><small>CP1 · Mid-Year · CP2 · Final · Homework</small></span>
+              <span class="operation-status status-next">Open</span>
+              <span class="operation-chevron">›</span>
+            </button>
+            <button class="operation-item" data-action="attendance">
+              <span class="operation-icon">◷</span>
+              <span class="operation-copy"><strong>Attendance</strong><small>Class attendance tracking</small></span>
+              <span class="operation-status status-next">Open</span>
+              <span class="operation-chevron">›</span>
+            </button>
+            <button class="operation-item" data-action="promotion">
+              <span class="operation-icon">★</span>
+              <span class="operation-copy"><strong>Promotion</strong><small>Annual readiness and review</small></span>
+              <span class="operation-status status-next">Open</span>
+              <span class="operation-chevron">›</span>
+            </button>
+          </div>
+        </article>
       </section>
+
+      <section class="dashboard-bottom-grid">
+        <article class="dashboard-card activity-card">
+          <div class="card-heading compact-heading">
+            <div>
+              <span class="section-label">Student Overview</span>
+              <h2>Academy at a glance</h2>
+            </div>
+            <button class="text-button" data-action="students">Manage students <span>→</span></button>
+          </div>
+          <div class="student-overview-grid">
+            <div class="overview-stat"><span>Active</span><strong>${activeStudents}</strong><small>Currently enrolled</small></div>
+            <div class="overview-stat"><span>Paused</span><strong>${pausedStudents}</strong><small>Temporarily paused</small></div>
+            <div class="overview-stat"><span>Graduated</span><strong>${graduatedStudents}</strong><small>Completed academy</small></div>
+          </div>
+        </article>
+
+        <article class="dashboard-card standard-card">
+          <span class="section-label">Promotion Standard</span>
+          <h2>Annual promotion</h2>
+          <div class="standard-number"><strong>110</strong><span>/ 275</span></div>
+          <p>Students must reach the overall annual threshold and the practical-board minimum for their current academy year.</p>
+          <button class="secondary-button full-button" data-action="promotion">Review promotion readiness <span>→</span></button>
+        </article>
+      </section>
+
+      <footer class="dashboard-footer">
+        <span><strong>EduChess Academy OS</strong> · Professional Chess Management System</span>
+        <span>Academic Year ${escapeHtml(currentYear)}</span>
+      </footer>
     </div>
   `;
 }
@@ -1368,37 +1690,69 @@ function applyStudentFilters() {
 
 function render() {
   app.innerHTML = `
-    <div class="academy-shell reference-shell">
-      <aside class="sidebar reference-sidebar">
-        <div class="reference-brand">
-          <div class="reference-brand-mark">♞</div>
-          <div><strong>EduChess</strong><span>ACADEMY OS</span></div>
+    <div class="academy-shell">
+
+      <aside class="sidebar">
+
+        <div class="brand">
+          <div class="brand-mark">♞</div>
+          <div>
+            <h1>EduChess</h1>
+            <span>Academy OS</span>
+          </div>
         </div>
 
-        <nav class="nav reference-nav">
-          <button class="nav-item ${currentView === 'dashboard' ? 'active' : ''}" data-view="dashboard"><span>⌂</span><span>Dashboard</span></button>
-          <button class="nav-item ${currentView === 'students' ? 'active' : ''}" data-view="students"><span>♟</span><span>Students</span></button>
-          <button class="nav-item ${currentView === 'student-progress' ? 'active' : ''}" data-view="curriculum"><span>▤</span><span>Curriculum</span></button>
-          <button class="nav-item ${currentView === 'assessments' ? 'active' : ''}" data-view="assessments"><span>✓</span><span>Assessments</span></button>
-          <button class="nav-item" data-view="attendance"><span>◷</span><span>Attendance</span></button>
-          <button class="nav-item" data-view="promotion"><span>★</span><span>Promotion</span></button>
-          <button class="nav-item" data-view="certificates"><span>⚑</span><span>Certificates</span></button>
-          <button class="nav-item" data-view="reports"><span>▥</span><span>Reports</span></button>
+        <nav class="nav">
+
+          <button
+            class="nav-item ${currentView === 'dashboard' ? 'active' : ''}"
+            data-view="dashboard"
+          >
+            ⌂ <span>Dashboard</span>
+          </button>
+
+          <button
+            class="nav-item ${currentView === 'students' ? 'active' : ''}"
+            data-view="students"
+          >
+            ♙ <span>Students</span>
+          </button>
+
+          <button class="nav-item" data-view="curriculum">
+            ▤ <span>Curriculum</span>
+          </button>
+
+          <button class="nav-item ${currentView === 'assessments' ? 'active' : ''}" data-view="assessments">
+            ✓ <span>Assessments</span>
+          </button>
+
+          <button class="nav-item" data-view="attendance">
+            ◷ <span>Attendance</span>
+          </button>
+
+          <button class="nav-item ${currentView === 'promotion' ? 'active' : ''}" data-view="promotion">
+            ★ <span>Promotion</span>
+          </button>
+
+          <button class="nav-item" data-view="certificates">
+            🎓 <span>Certificates</span>
+          </button>
+
+          <button class="nav-item" data-view="reports">
+            ▥ <span>Reports</span>
+          </button>
+
         </nav>
 
-        <div class="reference-sidebar-academy">
-          <span class="crown">♛</span>
-          <div><strong>EduChess Academy</strong><small>Professional Management System</small></div>
+        <div class="sidebar-footer">
+          <strong>EduChess Academy</strong>
+          <span>Professional Management System</span>
         </div>
 
-        <div class="reference-sidebar-user">
-          <div class="admin-avatar">EA</div>
-          <div><strong>Academy Admin</strong><small>Administrator</small></div>
-          <span>⌄</span>
-        </div>
       </aside>
 
-      <main class="main-content reference-main">
+      <main class="main-content">
+
         ${
           currentView === 'students'
             ? studentsView()
@@ -1406,9 +1760,13 @@ function render() {
               ? studentProgressView(selectedStudent()!)
               : currentView === 'assessments'
                 ? assessmentsView()
-                : dashboardView()
+                : currentView === 'promotion'
+                  ? promotionView()
+                  : dashboardView()
         }
+
       </main>
+
     </div>
   `;
 
@@ -1425,6 +1783,8 @@ function attachEvents() {
         render();
       } else if (view === 'assessments') {
         void openAssessments();
+      } else if (view === 'promotion') {
+        void openPromotion();
       }
     });
   });
@@ -1499,6 +1859,16 @@ function attachEvents() {
     if (student) await savePracticalAssessment(student);
   });
 
+  document.querySelector('#promotion-student')?.addEventListener('change', async (event) => {
+    selectedPromotionStudentId = (event.target as HTMLSelectElement).value;
+    await openPromotion(selectedPromotionStudentId);
+  });
+
+  document.querySelector('#save-promotion-review')?.addEventListener('click', async () => {
+    const student = students.find((item) => item.id === selectedPromotionStudentId);
+    if (student) await savePromotionReview(student);
+  });
+
   document.querySelectorAll<HTMLButtonElement>('[data-progress-year]').forEach((button) => {
     button.addEventListener('click', () => {
       progressYear = Number(button.dataset.progressYear ?? 1);
@@ -1522,6 +1892,10 @@ function attachEvents() {
   document.querySelector('[data-action="students"]')?.addEventListener('click', () => {
     currentView = 'students';
     render();
+  });
+
+  document.querySelectorAll<HTMLElement>('[data-action="promotion"]').forEach((button) => {
+    button.addEventListener('click', () => void openPromotion());
   });
 }
 
