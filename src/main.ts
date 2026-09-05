@@ -780,6 +780,72 @@ function promotionView(): string {
   `;
 }
 
+
+
+type CurriculumYear = {
+  id: string;
+  year_number: number;
+  stage_name: string;
+  identity: string | null;
+  goals: string | null;
+};
+
+type Batch = {
+  id: string;
+  name: string;
+  coach_id: string | null;
+  active: boolean;
+  location: string | null;
+};
+
+type AcademyClass = {
+  id: string;
+  batch_id: string;
+  class_date: string;
+  start_time: string | null;
+  end_time: string | null;
+  lesson_id: string | null;
+  notes: string | null;
+  batches?: { name: string } | null;
+};
+
+type AttendanceRecord = {
+  id?: string;
+  class_id: string;
+  student_id: string;
+  status: 'PRESENT' | 'ABSENT' | 'LATE' | 'EXCUSED';
+  remarks: string | null;
+};
+
+type CertificateRecord = {
+  id: string;
+  certificate_number: string;
+  verification_token: string;
+  student_id: string;
+  promotion_review_id: string;
+  academic_year: number;
+  stage_name: string;
+  annual_score: number;
+  practical_score: number;
+  issued_at: string;
+  status: 'ACTIVE' | 'REVOKED' | 'SUPERSEDED';
+  pdf_path: string | null;
+};
+
+let curriculumYearRecords: CurriculumYear[] = [];
+let curriculumFilterYear = 1;
+let curriculumSearch = '';
+let batches: Batch[] = [];
+let academyClasses: AcademyClass[] = [];
+let selectedClassId = '';
+let attendanceRecords: AttendanceRecord[] = [];
+let attendanceDate = new Date().toISOString().slice(0, 10);
+let certificates: CertificateRecord[] = [];
+let reportsLoaded = false;
+let reportProgressRows: Array<{student: Student; completed: number; total: number}> = [];
+let reportAssessmentRows: Array<{student: Student; total: number; practical: number}> = [];
+let reportAttendanceRows: Array<{student: Student; present: number; total: number; percentage: number}> = [];
+
 const curriculumYears = [
   ['Foundation', 'Rules, board vision, simple tactics and basic mates'],
   ['Early Development', 'Pattern growth, opening logic and attack basics'],
@@ -788,6 +854,177 @@ const curriculumYears = [
   ['Advanced Club', 'Prophylaxis, imbalances and advanced practical play'],
   ['Academy Mastery', 'Independent training, preparation and capstone analysis'],
 ];
+
+
+
+async function loadCurriculumCatalogue() {
+  const { data: years, error: yearError } = await supabase
+    .from('curriculum_years')
+    .select('id, year_number, stage_name, identity, goals')
+    .order('year_number', { ascending: true });
+  if (yearError) throw new Error(yearError.message);
+  curriculumYearRecords = (years ?? []) as CurriculumYear[];
+  if (!lessons.length) await loadCurriculumLessons();
+}
+
+async function openCurriculum() {
+  currentView = 'curriculum';
+  app.innerHTML = '<div class="loading-panel">Loading curriculum…</div>';
+  try {
+    await loadCurriculumCatalogue();
+    render();
+  } catch (error) {
+    app.innerHTML = `<section class="panel error-panel"><p class="eyebrow">CURRICULUM</p><h2>Unable to load curriculum</h2><p>${escapeHtml(error instanceof Error ? error.message : 'Unable to load curriculum.')}</p><button class="primary-button" id="retry-curriculum">Try Again</button></section>`;
+    document.querySelector('#retry-curriculum')?.addEventListener('click', () => void openCurriculum());
+  }
+}
+
+function curriculumView(): string {
+  const activeYear = curriculumYearRecords.find((y) => y.year_number === curriculumFilterYear);
+  const yearLessons = lessonsForYear(curriculumFilterYear);
+  const filtered = yearLessons.filter((lesson) => {
+    const q = curriculumSearch.trim().toLowerCase();
+    if (!q) return true;
+    return [lesson.title, lesson.description, lesson.objective, ...(lesson.key_terms ?? [])].some((v) => String(v ?? '').toLowerCase().includes(q));
+  });
+  const allLessons = lessons.length || 240;
+  return `
+    <header class="topbar"><div class="topbar-heading"><span class="topbar-kicker">Learning Programme</span><h2>Curriculum</h2></div><div class="topbar-actions"><div class="admin-area"><div class="admin-avatar">EA</div><div class="admin-copy"><strong>Academy Admin</strong><span>Curriculum Management</span></div></div></div></header>
+    <div class="module-page">
+      <section class="page-heading module-heading"><div><span class="section-label">Six-Year Programme</span><h1>EduChess Curriculum</h1><p>${allLessons} lessons across six academy years. Select a year to review the weekly programme.</p></div><span class="module-badge">240 Lessons</span></section>
+      <section class="curriculum-year-grid">
+        ${Array.from({length:6}, (_,i) => i+1).map((year) => { const meta=curriculumYearRecords.find(y=>y.year_number===year); const count=lessonsForYear(year).length; return `<button class="curriculum-year-card ${curriculumFilterYear===year?'selected':''}" data-curriculum-year="${year}"><span class="year-number">${String(year).padStart(2,'0')}</span><span><strong>${escapeHtml(meta?.stage_name ?? curriculumYears[year-1][0])}</strong><small>${count || 40} lessons</small></span><span class="year-chevron">›</span></button>`; }).join('')}
+      </section>
+      <section class="panel curriculum-detail-panel">
+        <div class="card-heading"><div><span class="section-label">Year ${curriculumFilterYear}</span><h2>${escapeHtml(activeYear?.stage_name ?? curriculumYears[curriculumFilterYear-1][0])}</h2><p>${escapeHtml(activeYear?.identity ?? curriculumYears[curriculumFilterYear-1][1])}</p></div><label class="module-search"><span>Search lessons</span><input id="curriculum-search" value="${escapeHtml(curriculumSearch)}" placeholder="Search title, objective or key term…" /></label></div>
+        ${activeYear?.goals ? `<div class="curriculum-goals"><strong>Year goals</strong><p>${escapeHtml(activeYear.goals)}</p></div>` : ''}
+        <div class="lesson-catalogue">
+          ${filtered.map((lesson) => `<article class="catalogue-row"><div class="catalogue-week">W${String(lesson.week_number).padStart(2,'0')}</div><div class="catalogue-main"><strong>${escapeHtml(lesson.title)}</strong><p>${escapeHtml(lesson.description ?? '')}</p><small>${escapeHtml(lesson.objective ?? '')}</small>${lesson.key_terms?.length ? `<div class="term-list">${lesson.key_terms.map((t)=>`<span>${escapeHtml(t)}</span>`).join('')}</div>`:''}</div><button class="secondary-button small-button" data-curriculum-progress="${curriculumFilterYear}">Student Progress →</button></article>`).join('') || `<div class="empty-state compact-empty"><div class="empty-icon">▤</div><h3>No lessons found</h3><p>Try a different search.</p></div>`}
+        </div>
+      </section>
+    </div>`;
+}
+
+async function loadAttendanceData() {
+  const { data: batchData, error: batchError } = await supabase.from('batches').select('id,name,coach_id,active,location').eq('academy_id', academyId).order('name');
+  if (batchError) throw new Error(batchError.message);
+  batches = (batchData ?? []) as Batch[];
+
+  const { data: classData, error: classError } = await supabase.from('classes').select('id,batch_id,class_date,start_time,end_time,lesson_id,notes,batches(name)').order('class_date', { ascending: false }).limit(50);
+  if (classError) throw new Error(classError.message);
+  academyClasses = (classData ?? []) as AcademyClass[];
+  if (!selectedClassId && academyClasses.length) selectedClassId = academyClasses[0].id;
+  await loadSelectedAttendance();
+}
+
+async function loadSelectedAttendance() {
+  attendanceRecords = [];
+  if (!selectedClassId) return;
+  const { data, error } = await supabase.from('attendance').select('id,class_id,student_id,status,remarks').eq('class_id', selectedClassId);
+  if (error) throw new Error(error.message);
+  attendanceRecords = (data ?? []) as AttendanceRecord[];
+}
+
+async function openAttendance() {
+  currentView = 'attendance';
+  app.innerHTML = '<div class="loading-panel">Loading attendance…</div>';
+  try { await loadAttendanceData(); render(); }
+  catch (error) {
+    app.innerHTML = `<section class="panel error-panel"><p class="eyebrow">ATTENDANCE</p><h2>Unable to load attendance</h2><p>${escapeHtml(error instanceof Error ? error.message : 'Unable to load attendance.')}</p><button class="primary-button" id="retry-attendance">Try Again</button></section>`;
+    document.querySelector('#retry-attendance')?.addEventListener('click', () => void openAttendance());
+  }
+}
+
+function attendanceSummary() {
+  const selected = academyClasses.find(c => c.id === selectedClassId);
+  const rows = attendanceRecords;
+  return { selected, present: rows.filter(r=>r.status==='PRESENT').length, absent: rows.filter(r=>r.status==='ABSENT').length, late: rows.filter(r=>r.status==='LATE').length, excused: rows.filter(r=>r.status==='EXCUSED').length };
+}
+
+function attendanceView(): string {
+  const summary = attendanceSummary();
+  const selected = summary.selected;
+  const classDate = selected?.class_date ?? attendanceDate;
+  const statusFor = (studentId:string) => attendanceRecords.find(r=>r.student_id===studentId)?.status ?? 'PRESENT';
+  return `
+    <header class="topbar"><div class="topbar-heading"><span class="topbar-kicker">Academy Operations</span><h2>Attendance</h2></div><div class="topbar-actions"><div class="admin-area"><div class="admin-avatar">EA</div><div class="admin-copy"><strong>Academy Admin</strong><span>Attendance Register</span></div></div></div></header>
+    <div class="module-page">
+      <section class="page-heading module-heading"><div><span class="section-label">Class Register</span><h1>Attendance</h1><p>Record presence, lateness, absence and approved leave for each class.</p></div><button class="primary-button" data-action="new-class">＋ New Class</button></section>
+      <section class="stats-grid module-stats"><article class="stat-card"><div class="stat-icon">✓</div><div><span>PRESENT</span><strong>${summary.present}</strong><small>Selected class</small></div></article><article class="stat-card"><div class="stat-icon">◷</div><div><span>LATE</span><strong>${summary.late}</strong><small>Needs monitoring</small></div></article><article class="stat-card"><div class="stat-icon">!</div><div><span>ABSENT</span><strong>${summary.absent}</strong><small>Selected class</small></div></article><article class="stat-card"><div class="stat-icon">✓</div><div><span>EXCUSED</span><strong>${summary.excused}</strong><small>Approved absence</small></div></article></section>
+      ${academyClasses.length ? `<section class="panel attendance-panel"><div class="card-heading"><div><span class="section-label">Recent Classes</span><h2>Attendance Register</h2></div><select id="attendance-class" class="module-select">${academyClasses.map(c=>`<option value="${c.id}" ${c.id===selectedClassId?'selected':''}>${escapeHtml(c.class_date)} · ${escapeHtml(c.batches?.name ?? 'Class')}</option>`).join('')}</select></div><div class="attendance-table"><div class="attendance-head"><span>Student</span><span>Status</span><span>Remarks</span></div>${students.filter(s=>s.status!=='LEFT').map(student=>{const rec=attendanceRecords.find(r=>r.student_id===student.id); return `<div class="attendance-row"><div><strong>${escapeHtml(studentName(student))}</strong><small>${escapeHtml(student.student_code)} · Year ${student.current_year}</small></div><select data-attendance-status="${student.id}"><option value="PRESENT" ${statusFor(student.id)==='PRESENT'?'selected':''}>Present</option><option value="LATE" ${statusFor(student.id)==='LATE'?'selected':''}>Late</option><option value="ABSENT" ${statusFor(student.id)==='ABSENT'?'selected':''}>Absent</option><option value="EXCUSED" ${statusFor(student.id)==='EXCUSED'?'selected':''}>Excused</option></select><input data-attendance-remarks="${student.id}" value="${escapeHtml(rec?.remarks)}" placeholder="Optional note" /></div>`;}).join('')}</div><div class="panel-actions"><span>${selected ? `Class date ${escapeHtml(classDate)}` : 'Select a class'}</span><button class="primary-button" id="save-attendance" ${selected?'':'disabled'}>Save Attendance</button></div></section>` : `<section class="panel empty-state"><div class="empty-icon">◷</div><h3>No classes have been created</h3><p>Create your first class to start recording attendance.</p><button class="primary-button" data-action="new-class">Create First Class</button></section>`}
+      ${batches.length ? `<section class="panel attendance-setup-panel"><div class="card-heading"><div><span class="section-label">Batches</span><h2>Active Teaching Groups</h2><p>Attendance classes are linked to academy batches.</p></div></div><div class="batch-grid">${batches.map(b=>`<div class="batch-card"><strong>${escapeHtml(b.name)}</strong><span>${escapeHtml(b.location ?? 'Academy')}</span><small>${b.active?'Active':'Inactive'}</small></div>`).join('')}</div></section>` : ''}
+    </div>`;
+}
+
+async function createClass() {
+  if (!batches.length) { window.alert('Please create a batch first. Attendance classes must belong to a batch.'); return; }
+  const batch = window.prompt(`Enter batch name exactly as shown:\n\n${batches.map(b=>b.name).join('\n')}`, batches[0].name);
+  if (!batch) return;
+  const selected = batches.find(b=>b.name.toLowerCase()===batch.trim().toLowerCase()) ?? batches[0];
+  const date = window.prompt('Class date (YYYY-MM-DD):', new Date().toISOString().slice(0,10));
+  if (!date) return;
+  const { data, error } = await supabase.from('classes').insert({ batch_id:selected.id, class_date:date }).select('id,batch_id,class_date,start_time,end_time,lesson_id,notes,batches(name)').single();
+  if (error) { window.alert(`Unable to create class.\n\n${error.message}`); return; }
+  selectedClassId = (data as AcademyClass).id;
+  await loadAttendanceData();
+  render();
+}
+
+async function saveAttendance() {
+  if (!selectedClassId) return;
+  const rows = students.filter(s=>s.status!=='LEFT').map(s=>({ class_id:selectedClassId, student_id:s.id, status:(document.querySelector<HTMLSelectElement>(`[data-attendance-status="${s.id}"]`)?.value ?? 'PRESENT') as AttendanceRecord['status'], remarks:document.querySelector<HTMLInputElement>(`[data-attendance-remarks="${s.id}"]`)?.value.trim() || null }));
+  const { error } = await supabase.from('attendance').upsert(rows, { onConflict:'class_id,student_id' });
+  if (error) { window.alert(`Unable to save attendance.\n\n${error.message}`); return; }
+  await loadSelectedAttendance();
+  render();
+}
+
+async function loadCertificates() {
+  const { data, error } = await supabase.from('certificates').select('id,certificate_number,verification_token,student_id,promotion_review_id,academic_year,stage_name,annual_score,practical_score,issued_at,status,pdf_path').order('issued_at', { ascending:false });
+  if (error) throw new Error(error.message);
+  certificates = (data ?? []) as CertificateRecord[];
+}
+
+async function openCertificates() {
+  currentView = 'certificates'; app.innerHTML='<div class="loading-panel">Loading certificates…</div>';
+  try { await loadCertificates(); render(); }
+  catch(error) { app.innerHTML=`<section class="panel error-panel"><p class="eyebrow">CERTIFICATES</p><h2>Unable to load certificates</h2><p>${escapeHtml(error instanceof Error ? error.message : 'Unable to load certificates.')}</p><button class="primary-button" id="retry-certificates">Try Again</button></section>`; document.querySelector('#retry-certificates')?.addEventListener('click',()=>void openCertificates()); }
+}
+
+function certificateView(): string {
+  const studentNameById=(id:string)=>studentName(students.find(s=>s.id===id) ?? ({first_name:'Unknown',last_name:null} as Student));
+  return `<header class="topbar"><div class="topbar-heading"><span class="topbar-kicker">Academy Records</span><h2>Certificates</h2></div><div class="topbar-actions"><div class="admin-area"><div class="admin-avatar">EA</div><div class="admin-copy"><strong>Academy Admin</strong><span>Certificate Records</span></div></div></div></header><div class="module-page"><section class="page-heading module-heading"><div><span class="section-label">Achievement Records</span><h1>Certificates</h1><p>View issued academy certificates and their verification status.</p></div><span class="module-badge">${certificates.length} Issued</span></section><section class="certificate-info panel"><div><strong>Certificate issuance</strong><p>Certificates are created through the controlled server-side issuance process after an approved promotion decision. This dashboard is ready to display and verify issued records.</p></div><span class="security-pill">Secure verification</span></section><section class="panel"><div class="card-heading"><div><span class="section-label">Certificate Register</span><h2>Issued Certificates</h2></div></div>${certificates.length ? `<div class="certificate-table"><div class="certificate-head"><span>Certificate</span><span>Student</span><span>Stage</span><span>Score</span><span>Status</span><span>Issued</span></div>${certificates.map(c=>`<div class="certificate-row"><div><strong>${escapeHtml(c.certificate_number)}</strong><small>${escapeHtml(c.verification_token.slice(0,12))}…</small></div><div><strong>${escapeHtml(studentNameById(c.student_id))}</strong></div><div>Year ${c.academic_year}<small>${escapeHtml(c.stage_name)}</small></div><div><strong>${c.annual_score}/275</strong><small>Practical ${c.practical_score}/30</small></div><span class="status-pill ${c.status.toLowerCase()}">${escapeHtml(c.status)}</span><span>${escapeHtml(new Date(c.issued_at).toLocaleDateString())}</span></div>`).join('')}</div>` : `<div class="empty-state compact-empty"><div class="empty-icon">🎓</div><h3>No certificates issued yet</h3><p>Approved promotion reviews can become certificates once the issuance service is enabled.</p></div>`}</section></div>`;
+}
+
+async function loadReports() {
+  reportProgressRows=[]; reportAssessmentRows=[]; reportAttendanceRows=[];
+  if (!lessons.length) await loadCurriculumLessons();
+  const { data: progressData, error: progressError } = await supabase.from('lesson_progress').select('student_id,lesson_id,status');
+  if (progressError) throw new Error(progressError.message);
+  for (const student of students) { const completed=(progressData??[]).filter((r:any)=>r.student_id===student.id && r.status==='COMPLETED').length; reportProgressRows.push({student,completed,total:lessons.length}); }
+  const { data: assessmentData, error: assessmentError } = await supabase.from('assessments').select('student_id,marks');
+  if (assessmentError) throw new Error(assessmentError.message);
+  const { data: practicalData, error: practicalError } = await supabase.from('practical_assessments').select('student_id,marks');
+  if (practicalError) throw new Error(practicalError.message);
+  for (const student of students) reportAssessmentRows.push({student,total:(assessmentData??[]).filter((r:any)=>r.student_id===student.id).reduce((a:number,r:any)=>a+Number(r.marks||0),0),practical:Number((practicalData??[]).find((r:any)=>r.student_id===student.id)?.marks||0)});
+  const { data: attendanceData, error: attendanceError } = await supabase.from('attendance').select('student_id,status');
+  if (attendanceError) throw new Error(attendanceError.message);
+  for (const student of students) { const rows=(attendanceData??[]).filter((r:any)=>r.student_id===student.id); const present=rows.filter((r:any)=>r.status==='PRESENT'||r.status==='LATE').length; reportAttendanceRows.push({student,present,total:rows.length,percentage:rows.length?Math.round((present/rows.length)*100):0}); }
+  reportsLoaded=true;
+}
+
+async function openReports() {
+  currentView='reports'; reportsLoaded=false; app.innerHTML='<div class="loading-panel">Building academy reports…</div>';
+  try { await loadReports(); render(); }
+  catch(error) { app.innerHTML=`<section class="panel error-panel"><p class="eyebrow">REPORTS</p><h2>Unable to build reports</h2><p>${escapeHtml(error instanceof Error ? error.message : 'Unable to build reports.')}</p><button class="primary-button" id="retry-reports">Try Again</button></section>`; document.querySelector('#retry-reports')?.addEventListener('click',()=>void openReports()); }
+}
+
+function reportsView(): string {
+  const avgProgress=reportProgressRows.length?Math.round(reportProgressRows.reduce((a,r)=>a+(r.total?r.completed/r.total*100:0),0)/reportProgressRows.length):0;
+  const avgAssessment=reportAssessmentRows.length?Math.round(reportAssessmentRows.reduce((a,r)=>a+r.total,0)/reportAssessmentRows.length):0;
+  const avgAttendance=reportAttendanceRows.length?Math.round(reportAttendanceRows.reduce((a,r)=>a+r.percentage,0)/reportAttendanceRows.length):0;
+  return `<header class="topbar"><div class="topbar-heading"><span class="topbar-kicker">Academy Intelligence</span><h2>Reports</h2></div><div class="topbar-actions"><div class="admin-area"><div class="admin-avatar">EA</div><div class="admin-copy"><strong>Academy Admin</strong><span>Academy Reports</span></div></div></div></header><div class="module-page"><section class="page-heading module-heading"><div><span class="section-label">Management Reports</span><h1>Academy Reports</h1><p>Live summaries of curriculum progress, assessments and attendance from your records.</p></div><button class="secondary-button" data-action="refresh-reports">↻ Refresh</button></section><section class="stats-grid module-stats"><article class="stat-card"><div class="stat-icon">▤</div><div><span>AVG CURRICULUM</span><strong>${avgProgress}%</strong><small>Across student records</small></div></article><article class="stat-card"><div class="stat-icon">✓</div><div><span>AVG ASSESSMENT</span><strong>${avgAssessment}</strong><small>Academic marks recorded</small></div></article><article class="stat-card"><div class="stat-icon">◷</div><div><span>AVG ATTENDANCE</span><strong>${avgAttendance}%</strong><small>Present or late</small></div></article><article class="stat-card"><div class="stat-icon">★</div><div><span>STUDENTS</span><strong>${students.length}</strong><small>${students.filter(s=>s.status==='ACTIVE').length} active</small></div></article></section><section class="reports-grid"><article class="panel report-panel"><div class="card-heading"><div><span class="section-label">Learning</span><h2>Student Progress</h2></div></div><div class="report-list">${reportProgressRows.map(r=>`<div class="report-row"><div><strong>${escapeHtml(studentName(r.student))}</strong><small>Year ${r.student.current_year}</small></div><div class="report-bar"><span style="width:${r.total?Math.round(r.completed/r.total*100):0}%"></span></div><strong>${r.total?Math.round(r.completed/r.total*100):0}%</strong></div>`).join('')||'<div class="empty-state compact-empty"><p>No students available.</p></div>'}</div></article><article class="panel report-panel"><div class="card-heading"><div><span class="section-label">Performance</span><h2>Assessment Snapshot</h2></div></div><div class="report-list">${reportAssessmentRows.map(r=>`<div class="report-row"><div><strong>${escapeHtml(studentName(r.student))}</strong><small>Practical ${r.practical}/30</small></div><div class="score-chip">${r.total}/275</div><span class="muted-value">Year ${r.student.current_year}</span></div>`).join('')||'<div class="empty-state compact-empty"><p>No assessment data yet.</p></div>'}</div></article></section><section class="panel report-panel"><div class="card-heading"><div><span class="section-label">Attendance</span><h2>Attendance Overview</h2></div></div><div class="report-table"><div class="report-table-head"><span>Student</span><span>Present/Late</span><span>Classes</span><span>Attendance</span></div>${reportAttendanceRows.map(r=>`<div class="report-table-row"><strong>${escapeHtml(studentName(r.student))}</strong><span>${r.present}</span><span>${r.total}</span><strong>${r.percentage}%</strong></div>`).join('')||'<div class="empty-state compact-empty"><p>No attendance data yet.</p></div>'}</div></section></div>`;
+}
 
 async function getAcademyId(): Promise<string> {
   const {
@@ -1718,7 +1955,7 @@ function render() {
             ♙ <span>Students</span>
           </button>
 
-          <button class="nav-item" data-view="curriculum">
+          <button class="nav-item ${currentView === 'curriculum' ? 'active' : ''}" data-view="curriculum">
             ▤ <span>Curriculum</span>
           </button>
 
@@ -1726,7 +1963,7 @@ function render() {
             ✓ <span>Assessments</span>
           </button>
 
-          <button class="nav-item" data-view="attendance">
+          <button class="nav-item ${currentView === 'attendance' ? 'active' : ''}" data-view="attendance">
             ◷ <span>Attendance</span>
           </button>
 
@@ -1734,11 +1971,11 @@ function render() {
             ★ <span>Promotion</span>
           </button>
 
-          <button class="nav-item" data-view="certificates">
+          <button class="nav-item ${currentView === 'certificates' ? 'active' : ''}" data-view="certificates">
             🎓 <span>Certificates</span>
           </button>
 
-          <button class="nav-item" data-view="reports">
+          <button class="nav-item ${currentView === 'reports' ? 'active' : ''}" data-view="reports">
             ▥ <span>Reports</span>
           </button>
 
@@ -1758,11 +1995,19 @@ function render() {
             ? studentsView()
             : currentView === 'student-progress' && selectedStudent()
               ? studentProgressView(selectedStudent()!)
-              : currentView === 'assessments'
-                ? assessmentsView()
-                : currentView === 'promotion'
-                  ? promotionView()
-                  : dashboardView()
+              : currentView === 'curriculum'
+                ? curriculumView()
+                : currentView === 'assessments'
+                  ? assessmentsView()
+                  : currentView === 'attendance'
+                    ? attendanceView()
+                    : currentView === 'promotion'
+                      ? promotionView()
+                      : currentView === 'certificates'
+                        ? certificateView()
+                        : currentView === 'reports'
+                          ? reportsView()
+                          : dashboardView()
         }
 
       </main>
@@ -1781,13 +2026,39 @@ function attachEvents() {
       if (view === 'dashboard' || view === 'students') {
         currentView = view;
         render();
+      } else if (view === 'curriculum') {
+        void openCurriculum();
       } else if (view === 'assessments') {
         void openAssessments();
+      } else if (view === 'attendance') {
+        void openAttendance();
       } else if (view === 'promotion') {
         void openPromotion();
+      } else if (view === 'certificates') {
+        void openCertificates();
+      } else if (view === 'reports') {
+        void openReports();
       }
     });
   });
+
+  document.querySelectorAll<HTMLButtonElement>('[data-curriculum-year]').forEach((button) => {
+    button.addEventListener('click', () => { curriculumFilterYear = Number(button.dataset.curriculumYear ?? 1); render(); });
+  });
+  document.querySelector('#curriculum-search')?.addEventListener('input', (event) => {
+    curriculumSearch = (event.target as HTMLInputElement).value; render();
+    const input = document.querySelector<HTMLInputElement>('#curriculum-search');
+    input?.focus(); input?.setSelectionRange(input.value.length, input.value.length);
+  });
+  document.querySelectorAll<HTMLElement>('[data-curriculum-progress]').forEach((button) => {
+    button.addEventListener('click', () => { const student = students.find(s => s.current_year === Number(button.dataset.curriculumProgress)) ?? students[0]; if (student) void openStudentProgress(student); else { currentView='students'; render(); } });
+  });
+  document.querySelector('#attendance-class')?.addEventListener('change', async (event) => {
+    selectedClassId = (event.target as HTMLSelectElement).value; await loadSelectedAttendance(); render();
+  });
+  document.querySelector('[data-action="new-class"]')?.addEventListener('click', () => void createClass());
+  document.querySelector('#save-attendance')?.addEventListener('click', () => void saveAttendance());
+  document.querySelector('[data-action="refresh-reports"]')?.addEventListener('click', () => void openReports());
 
   document.querySelectorAll<HTMLElement>('[data-action="add-student"]').forEach(
     (button) => {
