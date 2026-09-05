@@ -479,13 +479,23 @@ function renderStudentTable(): string {
               </td>
 
               <td>
-                <button
-                  class="row-button"
-                  data-student-id="${student.id}"
-                  data-action="student-profile"
-                >
-                  View
-                </button>
+                <div class="row-actions">
+                  <button
+                    class="row-button"
+                    data-student-id="${student.id}"
+                    data-action="edit-student"
+                  >
+                    Edit
+                  </button>
+
+                  <button
+                    class="row-button danger-button"
+                    data-student-id="${student.id}"
+                    data-action="delete-student"
+                  >
+                    Delete
+                  </button>
+                </div>
               </td>
             </tr>
           `).join('')}
@@ -495,18 +505,24 @@ function renderStudentTable(): string {
   `;
 }
 
-function studentFormModal(): string {
+function studentFormModal(student?: Student): string {
+  const editing = Boolean(student);
+  const title = editing ? 'Edit Student' : 'Add New Student';
+  const submitText = editing ? 'Save Changes' : 'Save Student';
+
   return `
-    <div class="modal-overlay" id="student-modal">
+    <div class="modal-overlay" id="student-modal" role="dialog" aria-modal="true">
       <div class="modal-card">
 
         <div class="modal-header">
           <div>
             <p class="eyebrow">STUDENT MANAGEMENT</p>
-            <h3>Add New Student</h3>
+            <h3>${title}</h3>
           </div>
 
-          <button class="modal-close" data-action="close-modal">×</button>
+          <button type="button" class="modal-close" data-action="close-modal" aria-label="Close">
+            ×
+          </button>
         </div>
 
         <form id="student-form">
@@ -518,43 +534,43 @@ function studentFormModal(): string {
 
               <label>
                 <span>First Name *</span>
-                <input name="first_name" required />
+                <input name="first_name" value="${escapeHtml(student?.first_name)}" required />
               </label>
 
               <label>
                 <span>Last Name</span>
-                <input name="last_name" />
+                <input name="last_name" value="${escapeHtml(student?.last_name)}" />
               </label>
 
               <label>
                 <span>Date of Birth</span>
-                <input name="date_of_birth" type="date" />
+                <input name="date_of_birth" type="date" value="${escapeHtml(student?.date_of_birth)}" />
               </label>
 
               <label>
                 <span>Joining Date</span>
-                <input name="joining_date" type="date" />
+                <input name="joining_date" type="date" value="${escapeHtml(student?.joining_date)}" />
               </label>
 
               <label>
                 <span>Current Year *</span>
                 <select name="current_year" required>
-                  <option value="1">Year 1 — Foundation</option>
-                  <option value="2">Year 2 — Early Development</option>
-                  <option value="3">Year 3 — Core Competitive</option>
-                  <option value="4">Year 4 — Competitive Intermediate</option>
-                  <option value="5">Year 5 — Advanced Club</option>
-                  <option value="6">Year 6 — Academy Mastery</option>
+                  ${[1,2,3,4,5,6].map((year) => `
+                    <option value="${year}" ${student?.current_year === year ? 'selected' : ''}>
+                      Year ${year} — ${curriculumYears[year - 1][0]}
+                    </option>
+                  `).join('')}
                 </select>
               </label>
 
               <label>
                 <span>Status</span>
                 <select name="status">
-                  <option value="ACTIVE">Active</option>
-                  <option value="PAUSED">Paused</option>
-                  <option value="LEFT">Left</option>
-                  <option value="GRADUATED">Graduated</option>
+                  ${(['ACTIVE','PAUSED','LEFT','GRADUATED'] as Student['status'][]).map((status) => `
+                    <option value="${status}" ${student?.status === status ? 'selected' : ''}>
+                      ${status.charAt(0) + status.slice(1).toLowerCase()}
+                    </option>
+                  `).join('')}
                 </select>
               </label>
 
@@ -568,12 +584,12 @@ function studentFormModal(): string {
 
               <label>
                 <span>Parent / Guardian Name</span>
-                <input name="parent_name" />
+                <input name="parent_name" value="${escapeHtml(student?.parent_name)}" />
               </label>
 
               <label>
                 <span>Contact Number</span>
-                <input name="parent_contact" type="tel" />
+                <input name="parent_contact" type="tel" value="${escapeHtml(student?.parent_contact)}" />
               </label>
 
             </div>
@@ -587,7 +603,7 @@ function studentFormModal(): string {
             </button>
 
             <button type="submit" class="primary-button">
-              Save Student
+              ${submitText}
             </button>
           </div>
 
@@ -597,9 +613,21 @@ function studentFormModal(): string {
   `;
 }
 
-async function addStudent(form: HTMLFormElement) {
-  const formData = new FormData(form);
+function nextStudentCode(): string {
+  const year = new Date().getFullYear();
+  const prefix = `ECA-${year}-`;
+  const numbers = students
+    .map((student) => student.student_code)
+    .filter((code) => code.startsWith(prefix))
+    .map((code) => Number(code.slice(prefix.length)))
+    .filter((number) => Number.isFinite(number) && number > 0);
 
+  const nextNumber = numbers.length ? Math.max(...numbers) + 1 : 1;
+  return `${prefix}${String(nextNumber).padStart(4, '0')}`;
+}
+
+async function saveStudent(form: HTMLFormElement, student?: Student) {
+  const formData = new FormData(form);
   const firstName = String(formData.get('first_name') ?? '').trim();
   const lastName = String(formData.get('last_name') ?? '').trim();
 
@@ -608,80 +636,134 @@ async function addStudent(form: HTMLFormElement) {
   }
 
   const year = Number(formData.get('current_year') ?? 1);
+  const status = String(formData.get('status') ?? 'ACTIVE') as Student['status'];
 
-  const nextNumber = students.length + 1;
-  const studentCode = `ECA-${new Date().getFullYear()}-${String(nextNumber).padStart(4, '0')}`;
+  const values = {
+    first_name: firstName,
+    last_name: lastName || null,
+    date_of_birth: formData.get('date_of_birth') || null,
+    parent_name: String(formData.get('parent_name') ?? '').trim() || null,
+    parent_contact: String(formData.get('parent_contact') ?? '').trim() || null,
+    joining_date: formData.get('joining_date') || null,
+    status,
+    current_year: year,
+  };
 
-  const { data, error } = await supabase
-    .from('students')
-    .insert({
-      academy_id: academyId,
-      student_code: studentCode,
-      first_name: firstName,
-      last_name: lastName || null,
-      date_of_birth: formData.get('date_of_birth') || null,
-      parent_name: formData.get('parent_name') || null,
-      parent_contact: formData.get('parent_contact') || null,
-      joining_date: formData.get('joining_date') || null,
-      status: formData.get('status') || 'ACTIVE',
-      current_year: year,
-    })
-    .select()
-    .single();
+  if (student) {
+    const { data, error } = await supabase
+      .from('students')
+      .update(values)
+      .eq('id', student.id)
+      .eq('academy_id', academyId)
+      .select()
+      .single();
 
-  if (error) {
-    throw new Error(error.message);
+    if (error) throw new Error(error.message);
+
+    const index = students.findIndex((item) => item.id === student.id);
+    if (index >= 0) students[index] = data as Student;
+  } else {
+    const { data, error } = await supabase
+      .from('students')
+      .insert({
+        academy_id: academyId,
+        student_code: nextStudentCode(),
+        ...values,
+      })
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    students.push(data as Student);
   }
 
-  students.push(data as Student);
   students.sort((a, b) => a.first_name.localeCompare(b.first_name));
 }
 
-function showModal() {
+function showModal(student?: Student) {
   document.querySelector('#student-modal')?.remove();
-  document.body.insertAdjacentHTML('beforeend', studentFormModal());
+  document.body.insertAdjacentHTML('beforeend', studentFormModal(student));
 
+  const modal = document.querySelector<HTMLDivElement>('#student-modal');
+  const card = modal?.querySelector<HTMLElement>('.modal-card');
   const form = document.querySelector<HTMLFormElement>('#student-form');
+
+  // Close with X/Cancel, clicking the dark overlay, or Escape.
+  modal?.querySelectorAll<HTMLElement>('[data-action="close-modal"]').forEach((button) => {
+    button.addEventListener('click', closeModal);
+  });
+
+  modal?.addEventListener('click', (event) => {
+    if (event.target === modal) closeModal();
+  });
+
+  const escapeHandler = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') closeModal();
+  };
+  document.addEventListener('keydown', escapeHandler, { once: true });
+
+  form?.querySelector<HTMLInputElement>('[name="first_name"]')?.focus();
 
   form?.addEventListener('submit', async (event) => {
     event.preventDefault();
 
-    const submitButton = form.querySelector<HTMLButtonElement>(
-      'button[type="submit"]'
-    );
-
+    const submitButton = form.querySelector<HTMLButtonElement>('button[type="submit"]');
     const errorBox = document.querySelector<HTMLDivElement>('#form-error');
 
     if (submitButton) {
       submitButton.disabled = true;
-      submitButton.textContent = 'Saving...';
+      submitButton.textContent = student ? 'Saving...' : 'Saving...';
     }
 
-    if (errorBox) {
-      errorBox.textContent = '';
-    }
+    if (errorBox) errorBox.textContent = '';
 
     try {
-      await addStudent(form);
+      await saveStudent(form, student);
       closeModal();
       render();
     } catch (error) {
       if (errorBox) {
-        errorBox.textContent =
-          error instanceof Error ? error.message : 'Unable to save student.';
+        errorBox.textContent = error instanceof Error ? error.message : 'Unable to save student.';
       }
-
       if (submitButton) {
         submitButton.disabled = false;
-        submitButton.textContent = 'Save Student';
+        submitButton.textContent = student ? 'Save Changes' : 'Save Student';
       }
     }
   });
+
+  // Keep the card reference intentionally used so focus/overlay behavior is reliable.
+  void card;
+}
+
+async function deleteStudent(student: Student) {
+  const name = studentName(student);
+  const confirmed = window.confirm(
+    `Delete ${name}?\n\nThis permanently removes the student record from the academy. This action cannot be undone.`
+  );
+
+  if (!confirmed) return;
+
+  const { error } = await supabase
+    .from('students')
+    .delete()
+    .eq('id', student.id)
+    .eq('academy_id', academyId);
+
+  if (error) {
+    window.alert(`Unable to delete ${name}.\n\n${error.message}`);
+    return;
+  }
+
+  students = students.filter((item) => item.id !== student.id);
+  render();
 }
 
 function closeModal() {
   document.querySelector('#student-modal')?.remove();
 }
+
 
 function applyStudentFilters() {
   const search =
@@ -800,7 +882,7 @@ function attachEvents() {
 
   document.querySelectorAll<HTMLElement>('[data-action="add-student"]').forEach(
     (button) => {
-      button.addEventListener('click', showModal);
+      button.addEventListener('click', () => showModal());
     }
   );
 
@@ -816,20 +898,21 @@ function attachEvents() {
   search?.addEventListener('input', applyStudentFilters);
   status?.addEventListener('change', applyStudentFilters);
 
-  document.querySelectorAll<HTMLElement>('[data-action="student-profile"]').forEach(
-    (button) => {
-      button.addEventListener('click', () => {
-        const id = button.dataset.studentId;
-        const student = students.find((item) => item.id === id);
+  document.querySelectorAll<HTMLElement>('[data-action="edit-student"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const id = button.dataset.studentId;
+      const student = students.find((item) => item.id === id);
+      if (student) showModal(student);
+    });
+  });
 
-        if (student) {
-          alert(
-            `Student Profile\n\n${studentName(student)}\nStudent ID: ${student.student_code}\nYear: ${student.current_year}\nStatus: ${student.status}`
-          );
-        }
-      });
-    }
-  );
+  document.querySelectorAll<HTMLElement>('[data-action="delete-student"]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const id = button.dataset.studentId;
+      const student = students.find((item) => item.id === id);
+      if (student) await deleteStudent(student);
+    });
+  });
 
   document.querySelector('[data-action="students"]')?.addEventListener('click', () => {
     currentView = 'students';
