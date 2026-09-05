@@ -21,9 +21,36 @@ type Student = {
   current_year: number;
 };
 
+type Lesson = {
+  id: string;
+  curriculum_year_id: string;
+  week_number: number;
+  title: string;
+  description: string | null;
+  objective: string | null;
+  key_terms: string[] | null;
+  teaching_example: string | null;
+  guided_exercises: string | null;
+  practical_task: string | null;
+  homework: string | null;
+  expected_outcome: string | null;
+  year_number?: number;
+};
+
+type LessonProgress = {
+  id?: string; student_id: string; lesson_id: string;
+  status: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'REQUIRES_REVIEW';
+  mastery_level: 'DEVELOPING' | 'SECURE' | 'INDEPENDENT' | null;
+  completed_at: string | null; coach_note: string | null;
+};
+
 let students: Student[] = [];
 let academyId = '';
 let currentView = 'dashboard';
+let selectedStudentId = '';
+let progressYear = 1;
+let lessons: Lesson[] = [];
+let lessonProgress: Record<string, LessonProgress> = {};
 
 const curriculumYears = [
   ['Foundation', 'Rules, board vision, simple tactics and basic mates'],
@@ -89,6 +116,88 @@ async function loadStudents() {
   }
 
   students = (data ?? []) as Student[];
+}
+
+async function loadCurriculumLessons() {
+  const { data, error } = await supabase.from('lessons').select(`
+    id, curriculum_year_id, week_number, title, description, objective,
+    key_terms, teaching_example, guided_exercises, practical_task,
+    homework, expected_outcome, curriculum_years!inner(year_number)
+  `).eq('active', true).order('week_number', { ascending: true });
+  if (error) throw new Error(error.message);
+  lessons = (data ?? []).map((row: any) => ({
+    ...row,
+    year_number: row.curriculum_years?.year_number ?? 1,
+  })) as Lesson[];
+}
+
+async function loadStudentProgress(studentId: string) {
+  const { data, error } = await supabase.from('lesson_progress')
+    .select('id, student_id, lesson_id, status, mastery_level, completed_at, coach_note')
+    .eq('student_id', studentId);
+  if (error) throw new Error(error.message);
+  lessonProgress = {};
+  for (const row of (data ?? []) as LessonProgress[]) lessonProgress[row.lesson_id] = row;
+}
+
+function selectedStudent(): Student | undefined {
+  return students.find((student) => student.id === selectedStudentId);
+}
+
+function lessonsForYear(year: number): Lesson[] {
+  return lessons.filter((lesson) => lesson.year_number === year);
+}
+
+function progressCounts(year: number) {
+  const yearLessons = lessonsForYear(year);
+  return {
+    total: yearLessons.length,
+    completed: yearLessons.filter((l) => lessonProgress[l.id]?.status === 'COMPLETED').length,
+    inProgress: yearLessons.filter((l) => lessonProgress[l.id]?.status === 'IN_PROGRESS').length,
+    review: yearLessons.filter((l) => lessonProgress[l.id]?.status === 'REQUIRES_REVIEW').length,
+  };
+}
+
+async function openStudentProgress(student: Student) {
+  selectedStudentId = student.id;
+  progressYear = progressYear || student.current_year;
+  currentView = 'student-progress';
+  app.innerHTML = '<div class="loading-panel">Loading curriculum progress…</div>';
+  try {
+    if (!lessons.length) await loadCurriculumLessons();
+    await loadStudentProgress(student.id);
+    render();
+  } catch (error) {
+    app.innerHTML = `<div class="error-panel"><h2>Unable to load curriculum</h2><p>${escapeHtml(error instanceof Error ? error.message : 'Unable to load curriculum progress.')}</p><button class="primary-button" id="retry-progress">Try Again</button></div>`;
+    document.querySelector('#retry-progress')?.addEventListener('click', () => openStudentProgress(student));
+  }
+}
+
+async function saveLessonProgress(lesson: Lesson, student: Student) {
+  const row = document.querySelector<HTMLElement>(`[data-lesson-row="${lesson.id}"]`);
+  const status = row?.querySelector<HTMLSelectElement>('[data-progress-status]')?.value as LessonProgress['status'] | undefined;
+  const mastery = row?.querySelector<HTMLSelectElement>('[data-progress-mastery]')?.value ?? '';
+  const note = row?.querySelector<HTMLTextAreaElement>('[data-progress-note]')?.value.trim() ?? '';
+  const button = row?.querySelector<HTMLButtonElement>('[data-save-progress]');
+  if (!status) return;
+  if (button) { button.disabled = true; button.textContent = 'Saving…'; }
+  const values = {
+    student_id: student.id, lesson_id: lesson.id, status,
+    mastery_level: mastery || null,
+    completed_at: status === 'COMPLETED' ? new Date().toISOString() : null,
+    coach_note: note || null,
+  };
+  const { data, error } = await supabase.from('lesson_progress')
+    .upsert(values, { onConflict: 'student_id,lesson_id' })
+    .select('id, student_id, lesson_id, status, mastery_level, completed_at, coach_note')
+    .single();
+  if (error) {
+    if (button) { button.disabled = false; button.textContent = 'Save'; }
+    window.alert(`Unable to save lesson progress.\n\n${error.message}`);
+    return;
+  }
+  lessonProgress[lesson.id] = data as LessonProgress;
+  render();
 }
 
 function escapeHtml(value: string | null | undefined): string {
@@ -483,6 +592,14 @@ function renderStudentTable(): string {
                   <button
                     class="row-button"
                     data-student-id="${student.id}"
+                    data-action="progress-student"
+                  >
+                    Progress
+                  </button>
+
+                  <button
+                    class="row-button"
+                    data-student-id="${student.id}"
                     data-action="edit-student"
                   >
                     Edit
@@ -502,6 +619,51 @@ function renderStudentTable(): string {
         </tbody>
       </table>
     </div>
+  `;
+}
+
+function studentProgressView(student: Student): string {
+  const counts = progressCounts(progressYear);
+  const percent = counts.total ? Math.round((counts.completed / counts.total) * 100) : 0;
+  const yearLessons = lessonsForYear(progressYear);
+  const yearName = curriculumYears[progressYear - 1]?.[0] ?? `Year ${progressYear}`;
+  return `
+    <header class="topbar"><div><p class="eyebrow">STUDENT LEARNING</p><h2>Curriculum Progress</h2></div><div class="admin-area"><div class="admin-avatar">EA</div><div><strong>Academy Admin</strong><span>Administrator</span></div></div></header>
+    <section class="page-heading"><div><p class="eyebrow">${escapeHtml(student.student_code)}</p><h3>${escapeHtml(studentName(student))}</h3><p>${escapeHtml(yearName)} · Current Year ${student.current_year}</p></div><button class="secondary-button" data-action="back-students">← Back to Students</button></section>
+    <section class="stats-grid student-stats">
+      <article class="stat-card"><div class="stat-icon">▤</div><div><span>YEAR ${progressYear} LESSONS</span><strong>${counts.completed} / ${counts.total}</strong><small>Completed</small></div></article>
+      <article class="stat-card"><div class="stat-icon">%</div><div><span>YEAR PROGRESS</span><strong>${percent}%</strong><small>${escapeHtml(yearName)}</small></div></article>
+      <article class="stat-card"><div class="stat-icon">→</div><div><span>IN PROGRESS</span><strong>${counts.inProgress}</strong><small>Lessons developing</small></div></article>
+      <article class="stat-card"><div class="stat-icon">!</div><div><span>REQUIRES REVIEW</span><strong>${counts.review}</strong><small>Needs coach attention</small></div></article>
+    </section>
+    <section class="panel curriculum-progress-panel">
+      <div class="panel-header"><div><p class="eyebrow">SIX-YEAR CURRICULUM</p><h3>Student Lesson Record</h3><p>Record lesson status, mastery and coach notes.</p></div><span class="badge">240 Lessons</span></div>
+      <div class="curriculum-year-tabs">
+        ${[1,2,3,4,5,6].map((year) => `<button class="curriculum-year-tab ${progressYear === year ? 'active' : ''}" data-progress-year="${year}"><strong>Year ${year}</strong><span>${escapeHtml(curriculumYears[year - 1][0])}</span></button>`).join('')}
+      </div>
+      <div class="progress-list">
+        ${yearLessons.map((lesson) => {
+          const progress = lessonProgress[lesson.id];
+          const status = progress?.status ?? 'NOT_STARTED';
+          const mastery = progress?.mastery_level ?? '';
+          return `<article class="lesson-progress-row" data-lesson-row="${lesson.id}">
+            <div class="lesson-number">${String(lesson.week_number).padStart(2,'0')}</div>
+            <div class="lesson-main">
+              <div class="lesson-title-line"><h4>Week ${lesson.week_number}: ${escapeHtml(lesson.title)}</h4><span class="status-pill ${status.toLowerCase().replaceAll('_','-')}">${status.replaceAll('_',' ')}</span></div>
+              <p>${escapeHtml(lesson.description)}</p>
+              ${lesson.objective ? `<div class="lesson-detail"><strong>Objective:</strong> ${escapeHtml(lesson.objective)}</div>` : ''}
+              ${lesson.key_terms?.length ? `<div class="lesson-terms"><strong>Key terms:</strong> ${lesson.key_terms.map((term) => escapeHtml(term)).join(', ')}</div>` : ''}
+              <div class="lesson-progress-controls">
+                <label><span>Status</span><select data-progress-status>${['NOT_STARTED','IN_PROGRESS','COMPLETED','REQUIRES_REVIEW'].map((v) => `<option value="${v}" ${status === v ? 'selected' : ''}>${v.replaceAll('_',' ')}</option>`).join('')}</select></label>
+                <label><span>Mastery</span><select data-progress-mastery><option value="">Not rated</option>${['DEVELOPING','SECURE','INDEPENDENT'].map((v) => `<option value="${v}" ${mastery === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+                <label class="lesson-note"><span>Coach note</span><textarea data-progress-note rows="2" placeholder="Add a short coaching note…">${escapeHtml(progress?.coach_note)}</textarea></label>
+                <button class="primary-button save-progress-button" data-save-progress type="button">Save</button>
+              </div>
+            </div>
+          </article>`;
+        }).join('')}
+      </div>
+    </section>
   `;
 }
 
@@ -857,7 +1019,9 @@ function render() {
         ${
           currentView === 'students'
             ? studentsView()
-            : dashboardView()
+            : currentView === 'student-progress' && selectedStudent()
+              ? studentProgressView(selectedStudent()!)
+              : dashboardView()
         }
 
       </main>
@@ -912,6 +1076,34 @@ function attachEvents() {
       const student = students.find((item) => item.id === id);
       if (student) await deleteStudent(student);
     });
+  });
+
+  document.querySelectorAll<HTMLElement>('[data-action="progress-student"]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const id = button.dataset.studentId;
+      const student = students.find((item) => item.id === id);
+      if (student) { progressYear = student.current_year; await openStudentProgress(student); }
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('[data-progress-year]').forEach((button) => {
+    button.addEventListener('click', () => {
+      progressYear = Number(button.dataset.progressYear ?? 1);
+      render();
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('[data-save-progress]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const row = button.closest<HTMLElement>('[data-lesson-row]');
+      const lesson = lessons.find((item) => item.id === row?.dataset.lessonRow);
+      const student = selectedStudent();
+      if (lesson && student) await saveLessonProgress(lesson, student);
+    });
+  });
+
+  document.querySelector('[data-action="back-students"]')?.addEventListener('click', () => {
+    currentView = 'students'; selectedStudentId = ''; render();
   });
 
   document.querySelector('[data-action="students"]')?.addEventListener('click', () => {
