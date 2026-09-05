@@ -3487,3 +3487,401 @@ body {
 
 @media(max-width:1100px){.curriculum-year-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.certificate-head,.certificate-row{grid-template-columns:1.2fr 1.2fr 1fr 1fr}.certificate-head span:nth-child(5),.certificate-head span:nth-child(6),.certificate-row > :nth-child(5),.certificate-row > :nth-child(6){display:none}}
 @media(max-width:800px){.module-heading{flex-direction:column}.module-search{min-width:0;width:100%}.reports-grid{grid-template-columns:1fr}.attendance-head,.attendance-row{grid-template-columns:1fr}.attendance-head{display:none}.attendance-row{gap:8px}.batch-grid{grid-template-columns:1fr}.curriculum-year-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.certificate-head{display:none}.certificate-row{grid-template-columns:1fr 1fr;gap:10px}.certificate-info{align-items:flex-start;flex-direction:column}}
+
+
+/* =========================================================
+   STUDENT SWITCHING + CURRICULUM PROGRESS POLISH
+   ========================================================= */
+
+.curriculum-progress-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.page-heading-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.student-switcher {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 300px;
+}
+
+.student-switcher > span {
+  color: #7f8794;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.student-switcher select {
+  min-height: 43px;
+  min-width: 300px;
+  padding: 10px 38px 10px 13px;
+  border: 1px solid #dcd7ce;
+  border-radius: 10px;
+  background: #fffdf9;
+  color: #1b2940;
+  font: inherit;
+  font-weight: 650;
+  box-shadow: 0 2px 7px rgba(25,35,50,.04);
+}
+
+.student-switcher select:focus,
+.assessment-select-label select:focus,
+#promotion-student:focus {
+  outline: none;
+  border-color: #b88a3b;
+  box-shadow: 0 0 0 3px rgba(184,138,59,.12);
+}
+
+/* Give all student selectors a consistent premium treatment. */
+.assessment-toolbar {
+  align-items: stretch;
+}
+
+.assessment-select-label {
+  min-width: 0;
+}
+
+.assessment-select-label select {
+  min-height: 44px;
+  background: #fffdf9;
+  font-weight: 650;
+}
+
+.promotion-toolbar {
+  align-items: flex-end;
+}
+
+.promotion-toolbar .assessment-select-label {
+  min-width: 360px;
+}
+
+.promotion-toolbar .assessment-select-label select,
+#promotion-student {
+  min-height: 44px;
+  background: #fffdf9;
+  font-weight: 650;
+}
+
+/* Curriculum year navigation: never squeeze six tabs into a single cramped line. */
+.curriculum-year-tabs {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
+  gap: 8px;
+  padding: 18px 22px;
+  border-top: 1px solid #eeeae3;
+  border-bottom: 1px solid #eeeae3;
+  background: #fcfbf8;
+}
+
+.curriculum-year-tab {
+  min-height: 58px;
+  padding: 9px 10px;
+  border: 1px solid #e2ddd4;
+  border-radius: 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: .18s ease;
+}
+
+.curriculum-year-tab:hover {
+  transform: translateY(-1px);
+  border-color: #c9b18a;
+}
+
+.curriculum-year-tab strong,
+.curriculum-year-tab span {
+  display: block;
+}
+
+.curriculum-year-tab strong {
+  font-size: 12px;
+}
+
+.curriculum-year-tab span {
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+/* Lesson cards: convert the old long horizontal form into a clean stacked record. */
+.progress-list {
+  padding: 8px 22px 24px;
+}
+
+.lesson-progress-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 16px;
+  padding: 24px 0;
+  border-bottom: 1px solid #eeeae3;
+}
+
+.lesson-progress-row:last-child {
+  border-bottom: 0;
+}
+
+.lesson-number {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #f2eee5;
+  color: #8a6934;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.lesson-main {
+  min-width: 0;
+}
+
+.lesson-title-line {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.lesson-title-line h4 {
+  margin: 3px 0 0;
+  color: #18263d;
+  font-size: 17px;
+  line-height: 1.35;
+}
+
+.lesson-week {
+  color: #a07b43;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .09em;
+}
+
+.lesson-description {
+  margin: 9px 0 0;
+  color: #697487;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.lesson-detail,
+.lesson-terms {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  color: #7b8491;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.lesson-detail strong,
+.lesson-terms strong {
+  flex: 0 0 auto;
+  color: #4e5969;
+  font-weight: 750;
+}
+
+.lesson-progress-controls {
+  display: grid;
+  grid-template-columns: minmax(170px, .75fr) minmax(170px, .75fr) minmax(260px, 1.4fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 15px;
+  border: 1px solid #ebe6dd;
+  border-radius: 12px;
+  background: #fcfbf8;
+}
+
+.lesson-progress-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.lesson-progress-controls label > span {
+  color: #7c8490;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.lesson-progress-controls select,
+.lesson-progress-controls textarea {
+  width: 100%;
+  min-height: 42px;
+  box-sizing: border-box;
+  border: 1px solid #ddd8cf;
+  border-radius: 9px;
+  background: #fff;
+  color: #28364b;
+  font: inherit;
+  padding: 9px 11px;
+}
+
+.lesson-progress-controls textarea {
+  min-height: 42px;
+  resize: vertical;
+}
+
+.lesson-progress-controls select:focus,
+.lesson-progress-controls textarea:focus {
+  outline: none;
+  border-color: #b88a3b;
+  box-shadow: 0 0 0 3px rgba(184,138,59,.10);
+}
+
+.save-progress-button {
+  min-height: 42px;
+  padding: 0 18px;
+  white-space: nowrap;
+}
+
+.status-pill {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.status-pill.not-started { background: #f1f2f4; color: #687181; }
+.status-pill.in-progress { background: #eef5ff; color: #3976b9; }
+.status-pill.completed { background: #edf8f2; color: #328061; }
+.status-pill.requires-review { background: #fff5df; color: #9b702c; }
+
+/* Assessment rows also get more breathing room. */
+.assessment-row {
+  gap: 20px;
+  padding: 22px 0;
+}
+
+.assessment-fields {
+  display: grid;
+  grid-template-columns: minmax(130px, .7fr) minmax(145px, .8fr) minmax(145px, .8fr) auto;
+  align-items: end;
+  gap: 11px;
+}
+
+/* Promotion toolbar should read as a clear student context switcher. */
+.promotion-toolbar {
+  padding: 18px 22px;
+  border: 1px solid #e5e1d8;
+  border-radius: 16px;
+  box-shadow: 0 7px 24px rgba(24,31,43,.05);
+}
+
+.promotion-year-summary {
+  min-width: 210px;
+  padding: 10px 14px;
+  border: 1px solid #eadfc9;
+  border-radius: 10px;
+  background: #fffaf0;
+}
+
+.promotion-year-summary span,
+.promotion-year-summary small {
+  display: block;
+}
+
+.promotion-year-summary span {
+  color: #927b55;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.promotion-year-summary strong {
+  display: block;
+  margin-top: 2px;
+  color: #1c2940;
+  font-size: 16px;
+}
+
+.promotion-year-summary small {
+  margin-top: 2px;
+  color: #777f8b;
+  font-size: 11px;
+}
+
+@media (max-width: 1050px) {
+  .curriculum-year-tabs {
+    grid-template-columns: repeat(3, minmax(120px, 1fr));
+  }
+
+  .lesson-progress-controls,
+  .assessment-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .lesson-note {
+    grid-column: 1 / -1;
+  }
+
+  .save-progress-button {
+    justify-self: start;
+  }
+}
+
+@media (max-width: 760px) {
+  .curriculum-progress-heading,
+  .page-heading-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .student-switcher,
+  .student-switcher select,
+  .promotion-toolbar .assessment-select-label {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .curriculum-year-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 14px;
+  }
+
+  .progress-list {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .lesson-progress-row {
+    grid-template-columns: 1fr;
+  }
+
+  .lesson-number {
+    width: 38px;
+    height: 38px;
+  }
+
+  .lesson-title-line {
+    flex-direction: column;
+  }
+
+  .lesson-progress-controls,
+  .assessment-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .lesson-note {
+    grid-column: auto;
+  }
+}
