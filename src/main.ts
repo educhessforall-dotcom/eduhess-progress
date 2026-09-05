@@ -640,193 +640,187 @@ function statusClass(status: Student['status']): string {
 
 function dashboardView(): string {
   const activeStudents = students.filter((s) => s.status === 'ACTIVE').length;
+  const pausedStudents = students.filter((s) => s.status === 'PAUSED').length;
+  const graduatedStudents = students.filter((s) => s.status === 'GRADUATED').length;
+  const currentYear = academicYears[0]?.year_label ?? '2026-2027';
+
+  const yearCounts = [1, 2, 3, 4, 5, 6].map((year) => ({
+    year,
+    name: curriculumYears[year - 1][0],
+    description: curriculumYears[year - 1][1],
+    students: students.filter((s) => s.status === 'ACTIVE' && s.current_year === year).length,
+  }));
 
   return `
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">ACADEMY MANAGEMENT</p>
+    <header class="topbar reference-topbar">
+      <div class="topbar-heading">
         <h2>Dashboard</h2>
+        <span>Academy Management</span>
       </div>
 
-      <div class="admin-area">
-        <div class="admin-avatar">EA</div>
-        <div>
-          <strong>Academy Admin</strong>
-          <span>Administrator</span>
+      <div class="topbar-brand">
+        <div class="topbar-brand-mark">♞</div>
+        <div><strong>EduChess</strong><span>ACADEMY</span></div>
+      </div>
+
+      <div class="topbar-actions">
+        <div class="admin-profile">
+          <div class="admin-avatar">EA</div>
+          <div class="admin-copy">
+            <strong>Academy Admin</strong>
+            <span>Administrator</span>
+          </div>
+          <span class="admin-chevron">⌄</span>
         </div>
+        <button class="notification-button" type="button" aria-label="Notifications">
+          ♟<span class="notification-count">3</span>
+        </button>
       </div>
     </header>
 
-    <section class="welcome">
-      <div>
-        <p class="eyebrow">EDUCHESS ACADEMY</p>
-        <h3>Welcome back</h3>
-        <p>
-          Monitor student learning, curriculum progress,
-          assessments and promotion readiness from one place.
-        </p>
-      </div>
-
-      <div class="current-year">
-        <span>ACADEMIC YEAR</span>
-        <strong>2026–2027</strong>
-      </div>
-    </section>
-
-    <section class="stats-grid">
-
-      <article class="stat-card">
-        <div class="stat-icon">♙</div>
+    <div class="reference-dashboard">
+      <section class="reference-hero">
         <div>
-          <span>ACTIVE STUDENTS</span>
-          <strong>${activeStudents}</strong>
-          <small>Currently enrolled</small>
+          <p class="reference-eyebrow">WELCOME BACK</p>
+          <h1>Welcome back, Academy Admin</h1>
+          <p>Monitor student learning, curriculum progress, assessments and promotion readiness from one place.</p>
+          <div class="academic-year-badge">▣ <strong>ACADEMIC YEAR ${escapeHtml(currentYear)}</strong></div>
         </div>
-      </article>
+        <div class="hero-chess-watermark" aria-hidden="true">♟ ♞ ♜</div>
+      </section>
 
-      <article class="stat-card">
-        <div class="stat-icon">▤</div>
-        <div>
-          <span>LESSONS COMPLETED</span>
-          <strong>0 / 240</strong>
-          <small>Across the academy</small>
-        </div>
-      </article>
-
-      <article class="stat-card">
-        <div class="stat-icon">✓</div>
-        <div>
-          <span>FULLY ASSESSED</span>
-          <strong>0</strong>
-          <small>Students with complete records</small>
-        </div>
-      </article>
-
-      <article class="stat-card">
-        <div class="stat-icon">★</div>
-        <div>
-          <span>READY FOR PROMOTION</span>
-          <strong>0</strong>
-          <small>Awaiting final review</small>
-        </div>
-      </article>
-
-    </section>
-
-    <section class="content-grid">
-
-      <article class="panel">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">CURRICULUM</p>
-            <h3>Six-Year Academy Programme</h3>
+      <section class="reference-metrics">
+        <article class="reference-metric-card">
+          <div class="metric-card-title">OVERALL STUDENT<br>PROGRESS</div>
+          <div class="donut-wrap">
+            <div class="donut"><span>${students.length ? '0%' : '0%'}</span></div>
           </div>
-          <span class="badge">240 Lessons</span>
-        </div>
+          <strong class="metric-big">${activeStudents} / ${students.length}</strong>
+          <span class="metric-sub">Students on Track</span>
+        </article>
 
-        <div class="year-list">
-          ${curriculumYears.map((year, index) => `
-            <div class="year-row">
-              <div class="year-number">${String(index + 1).padStart(2, '0')}</div>
-              <div class="year-info">
-                <strong>${year[0]}</strong>
-                <span>${year[1]}</span>
-              </div>
-              <div class="progress">
-                <div class="progress-track">
-                  <div class="progress-bar" style="width:0%"></div>
-                </div>
-                <span>0 / 40</span>
+        <article class="reference-metric-card topic-card">
+          <div class="metric-card-title">TOP LESSON TOPICS</div>
+          <div class="topic-icons">
+            <span>♜<small>Rooks</small></span>
+            <span>♞<small>Pawns</small></span>
+            <span>◕<small>Endings</small></span>
+            <span>✣<small>Tactics</small></span>
+          </div>
+          <div class="topic-line"><span></span></div>
+          <p>Rook Endings <b>Academy focus</b></p>
+          <div class="topic-line soft"><span></span></div>
+          <p>Pins &amp; Skewers <b>Core tactics</b></p>
+        </article>
+
+        <article class="reference-metric-card assessment-mini-card">
+          <div class="metric-card-title">ASSESSMENT SCORES</div>
+          <div class="empty-chart">
+            <span>100</span><span>75</span><span>50</span><span>25</span><span>0</span>
+            <div class="chart-bars">
+              <i style="height:18%"></i><i style="height:28%"></i><i style="height:12%"></i><i style="height:22%"></i><i style="height:15%"></i>
+            </div>
+          </div>
+          <div class="chart-labels"><span>CP1</span><span>CP2</span><span>Mid-Year</span><span>Final</span></div>
+          <small>Assessment records will appear here</small>
+        </article>
+
+        <article class="reference-metric-card completion-card">
+          <div class="metric-card-title">CURRICULUM COMPLETION</div>
+          <div class="completion-row"><strong>Year 1</strong><span>0%</span></div>
+          <div class="completion-track"><span style="width:0%"></span></div>
+          <div class="completion-row"><strong>Year 2</strong><span>0%</span></div>
+          <div class="completion-track"><span style="width:0%"></span></div>
+          <div class="completion-row"><strong>Year 3</strong><span>0%</span></div>
+          <div class="completion-track"><span style="width:0%"></span></div>
+          <button class="reference-link" data-action="curriculum">View Curriculum <span>→</span></button>
+        </article>
+      </section>
+
+      <section class="reference-main-grid">
+        <article class="reference-panel progress-tracker-panel">
+          <div class="reference-panel-header">
+            <div>
+              <p class="reference-eyebrow">STUDENT PROGRESS TRACKER</p>
+              <h2>Student Progress Tracker</h2>
+            </div>
+            <button class="reference-link" data-action="students">View all students <span>→</span></button>
+          </div>
+
+          ${
+            students.length
+              ? `<div class="progress-table">
+                  <div class="progress-table-head">
+                    <span>Student</span><span>Year</span><span>Current Lesson</span><span>Progress</span><span>Latest Score</span>
+                  </div>
+                  ${students.slice(0, 5).map((student) => `
+                    <div class="progress-table-row">
+                      <div class="progress-student">
+                        <div class="student-avatar">${escapeHtml(student.first_name.charAt(0))}</div>
+                        <div><strong>${escapeHtml(studentName(student))}</strong><small>Curriculum Year</small></div>
+                      </div>
+                      <span>Year ${student.current_year}</span>
+                      <span>Not started</span>
+                      <div class="mini-progress"><span style="width:0%"></span><small>0 / 40</small></div>
+                      <strong class="score-placeholder">—</strong>
+                    </div>
+                  `).join('')}
+                </div>`
+              : `<div class="reference-empty">
+                  <div class="empty-chess">♞</div>
+                  <h3>No students yet</h3>
+                  <p>Add your first student to begin tracking academy progress.</p>
+                  <button class="reference-gold-button" data-action="add-student">+ Add Student</button>
+                </div>`
+          }
+        </article>
+
+        <div class="reference-side-stack">
+          <article class="reference-panel achievements-panel">
+            <div class="reference-panel-header">
+              <div>
+                <p class="reference-eyebrow">ACADEMY</p>
+                <h2>Recent Achievements</h2>
               </div>
             </div>
+            <div class="achievement-grid">
+              <div><span class="achievement-icon gold">♜</span><span>Completed<br>Foundation</span></div>
+              <div><span class="achievement-icon gold">✦</span><span>Perfect<br>Attendance</span></div>
+              <div><span class="achievement-icon green">✓</span><span>Assessment<br>Verified</span></div>
+              <div><span class="achievement-icon blue">★</span><span>Independent<br>Mastery</span></div>
+            </div>
+            <button class="reference-link" data-action="reports">View all achievements <span>→</span></button>
+          </article>
+
+          <article class="reference-panel reminders-panel">
+            <div class="reference-panel-header">
+              <div>
+                <p class="reference-eyebrow">ACADEMY CALENDAR</p>
+                <h2>Upcoming Reminders</h2>
+              </div>
+            </div>
+            <div class="reminder-row"><span>▣</span><strong>Checkpoint 1 Assessments</strong><small>Week 10</small></div>
+            <div class="reminder-row"><span>▣</span><strong>Mid-Year Examinations</strong><small>Week 20</small></div>
+            <button class="reference-link" data-action="record-assessment">Open Assessments <span>→</span></button>
+          </article>
+        </div>
+      </section>
+
+      <section class="reference-footer-strip">
+        <div>
+          <span class="reference-eyebrow">PROGRAMME OVERVIEW</span>
+          <strong>Six-Year Academy Programme</strong>
+          <small>240 structured weekly lessons</small>
+        </div>
+        <div class="year-pills">
+          ${yearCounts.map((item) => `
+            <button class="year-pill ${item.year === 1 ? 'current' : ''}" data-action="curriculum">
+              <span>${String(item.year).padStart(2, '0')}</span>${escapeHtml(item.name)}
+            </button>
           `).join('')}
         </div>
-      </article>
-
-      <article class="panel">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">ACADEMY STATUS</p>
-            <h3>Management Overview</h3>
-          </div>
-        </div>
-
-        <div class="status-list">
-
-          <div class="status-item">
-            <div class="status-symbol">♙</div>
-            <div>
-              <strong>Student Records</strong>
-              <span>${students.length} student record${students.length === 1 ? '' : 's'}</span>
-            </div>
-            <span class="status-dot ${students.length ? 'complete' : 'pending'}"></span>
-          </div>
-
-          <div class="status-item">
-            <div class="status-symbol">✓</div>
-            <div>
-              <strong>Assessments</strong>
-              <span>CP1, Mid-Year, CP2 and Final</span>
-            </div>
-            <span class="status-dot pending"></span>
-          </div>
-
-          <div class="status-item">
-            <div class="status-symbol">◷</div>
-            <div>
-              <strong>Attendance</strong>
-              <span>Class attendance tracking</span>
-            </div>
-            <span class="status-dot pending"></span>
-          </div>
-
-          <div class="status-item">
-            <div class="status-symbol">★</div>
-            <div>
-              <strong>Promotion</strong>
-              <span>Annual promotion readiness</span>
-            </div>
-            <span class="status-dot pending"></span>
-          </div>
-
-        </div>
-      </article>
-
-    </section>
-
-    <section class="bottom-grid">
-
-      <article class="panel quick-panel">
-        <p class="eyebrow">QUICK ACTIONS</p>
-        <h3>Academy Operations</h3>
-
-        <div class="quick-actions">
-          <button data-action="add-student">＋ Add Student</button>
-          <button data-action="students">♙ View Students</button>
-          <button data-action="record-assessment">✓ Record Assessment</button>
-          <button>◷ Mark Attendance</button>
-        </div>
-      </article>
-
-      <article class="panel standards-panel">
-        <p class="eyebrow">PROMOTION STANDARD</p>
-        <h3>Annual Promotion</h3>
-        <div class="standard-score">
-          <strong>110</strong>
-          <span>/ 275 minimum overall</span>
-        </div>
-        <p>
-          Promotion also requires the year-specific
-          practical board minimum.
-        </p>
-      </article>
-
-    </section>
-
-    <footer class="footer">
-      <span>EduChess Academy OS</span>
-      <span>Six-Year Professional Chess Development System</span>
-    </footer>
+      </section>
+    </div>
   `;
 }
 
@@ -1374,69 +1368,37 @@ function applyStudentFilters() {
 
 function render() {
   app.innerHTML = `
-    <div class="academy-shell">
-
-      <aside class="sidebar">
-
-        <div class="brand">
-          <div class="brand-mark">♞</div>
-          <div>
-            <h1>EduChess</h1>
-            <span>Academy OS</span>
-          </div>
+    <div class="academy-shell reference-shell">
+      <aside class="sidebar reference-sidebar">
+        <div class="reference-brand">
+          <div class="reference-brand-mark">♞</div>
+          <div><strong>EduChess</strong><span>ACADEMY OS</span></div>
         </div>
 
-        <nav class="nav">
-
-          <button
-            class="nav-item ${currentView === 'dashboard' ? 'active' : ''}"
-            data-view="dashboard"
-          >
-            ⌂ <span>Dashboard</span>
-          </button>
-
-          <button
-            class="nav-item ${currentView === 'students' ? 'active' : ''}"
-            data-view="students"
-          >
-            ♙ <span>Students</span>
-          </button>
-
-          <button class="nav-item" data-view="curriculum">
-            ▤ <span>Curriculum</span>
-          </button>
-
-          <button class="nav-item ${currentView === 'assessments' ? 'active' : ''}" data-view="assessments">
-            ✓ <span>Assessments</span>
-          </button>
-
-          <button class="nav-item" data-view="attendance">
-            ◷ <span>Attendance</span>
-          </button>
-
-          <button class="nav-item" data-view="promotion">
-            ★ <span>Promotion</span>
-          </button>
-
-          <button class="nav-item" data-view="certificates">
-            🎓 <span>Certificates</span>
-          </button>
-
-          <button class="nav-item" data-view="reports">
-            ▥ <span>Reports</span>
-          </button>
-
+        <nav class="nav reference-nav">
+          <button class="nav-item ${currentView === 'dashboard' ? 'active' : ''}" data-view="dashboard"><span>⌂</span><span>Dashboard</span></button>
+          <button class="nav-item ${currentView === 'students' ? 'active' : ''}" data-view="students"><span>♟</span><span>Students</span></button>
+          <button class="nav-item ${currentView === 'student-progress' ? 'active' : ''}" data-view="curriculum"><span>▤</span><span>Curriculum</span></button>
+          <button class="nav-item ${currentView === 'assessments' ? 'active' : ''}" data-view="assessments"><span>✓</span><span>Assessments</span></button>
+          <button class="nav-item" data-view="attendance"><span>◷</span><span>Attendance</span></button>
+          <button class="nav-item" data-view="promotion"><span>★</span><span>Promotion</span></button>
+          <button class="nav-item" data-view="certificates"><span>⚑</span><span>Certificates</span></button>
+          <button class="nav-item" data-view="reports"><span>▥</span><span>Reports</span></button>
         </nav>
 
-        <div class="sidebar-footer">
-          <strong>EduChess Academy</strong>
-          <span>Professional Management System</span>
+        <div class="reference-sidebar-academy">
+          <span class="crown">♛</span>
+          <div><strong>EduChess Academy</strong><small>Professional Management System</small></div>
         </div>
 
+        <div class="reference-sidebar-user">
+          <div class="admin-avatar">EA</div>
+          <div><strong>Academy Admin</strong><small>Administrator</small></div>
+          <span>⌄</span>
+        </div>
       </aside>
 
-      <main class="main-content">
-
+      <main class="main-content reference-main">
         ${
           currentView === 'students'
             ? studentsView()
@@ -1446,9 +1408,7 @@ function render() {
                 ? assessmentsView()
                 : dashboardView()
         }
-
       </main>
-
     </div>
   `;
 
