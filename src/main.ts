@@ -837,8 +837,66 @@ function attachEvents() {
   });
 }
 
+function renderLogin() {
+  app.innerHTML = `
+    <div class="login-page">
+      <div class="login-card">
+        <div class="login-brand">
+          <div class="login-mark">♞</div>
+          <div><h1>EduChess</h1><span>Academy OS</span></div>
+        </div>
+        <div class="login-heading">
+          <p class="eyebrow">EDUCHESS ACADEMY</p>
+          <h2>Welcome back</h2>
+          <p>Sign in to manage students, curriculum, assessments and academy operations.</p>
+        </div>
+        <form id="login-form">
+          <label class="login-field"><span>Email Address</span><input type="email" name="email" autocomplete="email" placeholder="Enter your email" required /></label>
+          <label class="login-field"><span>Password</span><input type="password" name="password" autocomplete="current-password" placeholder="Enter your password" required /></label>
+          <div id="login-error" class="form-error"></div>
+          <button type="submit" class="primary-button login-button">Sign In</button>
+        </form>
+        <div class="login-footer"><span>EduChess Academy OS</span><span>Professional Chess Management System</span></div>
+      </div>
+    </div>
+  `;
+
+  const form = document.querySelector<HTMLFormElement>('#login-form');
+  form?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const formData = new FormData(form);
+    const email = String(formData.get('email') ?? '').trim();
+    const password = String(formData.get('password') ?? '');
+    const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+    const errorBox = document.querySelector<HTMLDivElement>('#login-error');
+    if (button) { button.disabled = true; button.textContent = 'Signing in...'; }
+    if (errorBox) errorBox.textContent = '';
+
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      if (errorBox) errorBox.textContent = error.message;
+      if (button) { button.disabled = false; button.textContent = 'Sign In'; }
+      return;
+    }
+
+    try {
+      await loadStudents();
+      render();
+    } catch (error) {
+      if (errorBox) errorBox.textContent = error instanceof Error ? error.message : 'Unable to load academy.';
+      if (button) { button.disabled = false; button.textContent = 'Sign In'; }
+    }
+  });
+}
+
 async function startApp() {
   try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      renderLogin();
+      return;
+    }
+
     await loadStudents();
     render();
   } catch (error) {
